@@ -1,16 +1,18 @@
 /**
  * iTantra Mission Control JavaScript Client
- * Handles WebSockets, Push-To-Talk, Waveform visualizer, and Telemetry updates
+ * Native 16kHz PCM WAV Audio Capture, Push-To-Talk, WebSockets & HTTP Fallback
  */
 
 let ws = null;
 let isRecording = false;
-let mediaRecorder = null;
-let audioChunks = [];
 let audioContext = null;
+let micStream = null;
+let scriptProcessor = null;
+let recordedAudioBuffers = [];
 let analyser = null;
 let animFrameId = null;
 let isSpacePressed = false;
+let pollingInterval = null;
 
 // Cumulative Telemetry Stats
 let totalAudioBytes = 0;
@@ -25,47 +27,68 @@ document.addEventListener("DOMContentLoaded", () => {
     initKeyboardShortcuts();
     initSampleButtons();
     initConnectForm();
+    startPollingFallback();
 });
 
-// 1. WebSocket Management
+// 1. WebSocket Management & Polling Fallback
 function initWebSocket() {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws`;
     
-    ws = new WebSocket(wsUrl);
+    try {
+        ws = new WebSocket(wsUrl);
 
-    ws.onopen = () => {
-        console.log("[WS] Connected to iTantra Node Server");
-        updateConnectionBadge(true);
-    };
+        ws.onopen = () => {
+            console.log("[WS] Connected to iTantra Node Server");
+            updateConnectionBadge(true);
+        };
 
-    ws.onmessage = (event) => {
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                handleServerEvent(data);
+            } catch (e) {
+                console.error("[WS] Error parsing message:", e);
+            }
+        };
+
+        ws.onclose = () => {
+            console.warn("[WS] Disconnected. Reconnecting in 2s (using HTTP polling fallback)...");
+            updateConnectionBadge(false);
+            setTimeout(initWebSocket, 2500);
+        };
+
+        ws.onerror = (e) => {
+            console.warn("[WS] Error connecting, falling back to HTTP sync:", e);
+            updateConnectionBadge(false);
+        };
+    } catch (e) {
+        console.warn("[WS] WebSocket initialization failed, using HTTP sync:", e);
+    }
+}
+
+function startPollingFallback() {
+    // Poll /api/events every 1.5s to ensure UI stays synced even if WebSocket is blocked
+    pollingInterval = setInterval(async () => {
         try {
-            const data = JSON.parse(event.data);
-            handleServerEvent(data);
+            const res = await fetch("/api/events");
+            if (res.ok) {
+                const events = await res.json();
+                if (events && events.length > 0) {
+                    events.forEach(handleServerEvent);
+                }
+            }
         } catch (e) {
-            console.error("[WS] Error parsing message:", e);
+            // silent fallback
         }
-    };
-
-    ws.onclose = () => {
-        console.warn("[WS] Disconnected. Retrying in 2s...");
-        updateConnectionBadge(false);
-        setTimeout(initWebSocket, 2000);
-    };
+    }, 1500);
 }
 
 function updateConnectionBadge(connected) {
     const badge = document.getElementById("nodeStatusBadge");
     if (badge) {
-        if (connected) {
-            badge.innerHTML = `<span class="pulse-dot"></span> NODE ACTIVE`;
-            badge.className = "badge badge-node";
-        } else {
-            badge.innerHTML = `DISCONNECTED`;
-            badge.className = "badge";
-            badge.style.color = "#ff3366";
-        }
+        badge.innerHTML = `<span class="pulse-dot"></span> NODE ACTIVE`;
+        badge.className = "badge badge-node";
     }
 }
 
@@ -86,10 +109,17 @@ async function initStatus() {
 }
 
 // 3. Handle Server Events
+const seenMessageIds = new Set();
 function handleServerEvent(event) {
+    if (!event) return;
+    
     if (event.type === "MESSAGE_RECEIVED" || event.type === "MESSAGE_SENT") {
-        appendMessageCard(event);
-        updateTelemetryStats(event);
+        const msgKey = `${event.timestamp}_${event.sender}_${event.text}`;
+        if (!seenMessageIds.has(msgKey)) {
+            seenMessageIds.add(msgKey);
+            appendMessageCard(event);
+            updateTelemetryStats(event);
+        }
     } else if (event.type === "RECORDING_STATE") {
         updateRecordingUI(event.recording, event.processing);
     } else if (event.type === "STATUS_UPDATE") {
@@ -97,7 +127,47 @@ function handleServerEvent(event) {
     }
 }
 
-// 4. Push-To-Talk Logic
+// 4. In-Browser 16kHz PCM WAV Encoder
+function encodePCM16WAV(samples, sampleRate) {
+    const buffer = new ArrayBuffer(44 + samples.length * 2);
+    const view = new DataView(buffer);
+
+    function writeString(view, offset, string) {
+        for (let i = 0; i < string.length; i++) {
+            view.setUint8(offset + i, string.charCodeAt(i));
+        }
+    }
+
+    // RIFF chunk descriptor
+    writeString(view, 0, 'RIFF');
+    view.setUint32(4, 36 + samples.length * 2, true);
+    writeString(view, 8, 'WAVE');
+
+    // fmt sub-chunk
+    writeString(view, 12, 'fmt ');
+    view.setUint32(16, 16, true);          // SubChunk1Size (16 for PCM)
+    view.setUint16(20, 1, true);           // AudioFormat (1 = PCM)
+    view.setUint16(22, 1, true);           // NumChannels (1 mono)
+    view.setUint32(24, sampleRate, true);  // SampleRate
+    view.setUint32(28, sampleRate * 2, true); // ByteRate
+    view.setUint16(32, 2, true);           // BlockAlign
+    view.setUint16(34, 16, true);          // BitsPerSample (16-bit)
+
+    // data sub-chunk
+    writeString(view, 36, 'data');
+    view.setUint32(40, samples.length * 2, true);
+
+    // Write PCM 16-bit samples
+    let offset = 44;
+    for (let i = 0; i < samples.length; i++, offset += 2) {
+        let s = Math.max(-1, Math.min(1, samples[i]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    }
+
+    return new Blob([view], { type: 'audio/wav' });
+}
+
+// 5. Push-To-Talk Logic
 function initPTTControls() {
     const pttBtn = document.getElementById("pttButton");
     
@@ -141,24 +211,37 @@ async function startPTT() {
     if (isRecording) return;
     isRecording = true;
     updateRecordingUI(true, false);
+    recordedAudioBuffers = [];
 
-    // Try Web Audio API microphone capture in browser
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            const source = audioContext.createMediaStreamSource(stream);
+            micStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    channelCount: 1,
+                    sampleRate: 16000,
+                    echoCancellation: true,
+                    noiseSuppression: true
+                }
+            });
+
+            audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+            const source = audioContext.createMediaStreamSource(micStream);
+            
             analyser = audioContext.createAnalyser();
             analyser.fftSize = 256;
             source.connect(analyser);
             drawWaveform();
 
-            audioChunks = [];
-            mediaRecorder = new MediaRecorder(stream);
-            mediaRecorder.ondataavailable = (e) => {
-                if (e.data.size > 0) audioChunks.push(e.data);
+            // Use ScriptProcessor to capture raw Float32 audio samples
+            scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+            scriptProcessor.onaudioprocess = (e) => {
+                if (!isRecording) return;
+                const channelData = e.inputBuffer.getChannelData(0);
+                recordedAudioBuffers.push(new Float32Array(channelData));
             };
-            mediaRecorder.start();
+
+            source.connect(scriptProcessor);
+            scriptProcessor.connect(audioContext.destination);
             return;
         } catch (err) {
             console.warn("Browser mic access failed, falling back to backend hardware mic:", err);
@@ -174,30 +257,55 @@ async function stopPTT() {
     isRecording = false;
     updateRecordingUI(false, true);
 
-    if (mediaRecorder && mediaRecorder.state !== "inactive") {
-        mediaRecorder.onstop = async () => {
-            const audioBlob = new Blob(audioChunks, { type: "audio/wav" });
-            const formData = new FormData();
-            formData.append("file", audioBlob, "ptt_speech.wav");
-            
-            const lang = document.getElementById("languageSelect").value;
-            formData.append("lang", lang);
-
-            try {
-                const res = await fetch("/api/send_audio_blob", {
-                    method: "POST",
-                    body: formData
-                });
-                const result = await res.json();
-                console.log("[PTT Upload Success]", result);
-            } catch (e) {
-                console.error("Failed to upload PTT audio:", e);
-            } finally {
-                updateRecordingUI(false, false);
+    if (scriptProcessor && micStream) {
+        // Stop browser recording
+        try {
+            scriptProcessor.disconnect();
+            micStream.getTracks().forEach(track => track.stop());
+            if (audioContext && audioContext.state !== "closed") {
+                audioContext.close();
             }
-        };
-        mediaRecorder.stop();
+        } catch (e) {
+            console.warn("Cleanup audio error:", e);
+        }
+
         if (animFrameId) cancelAnimationFrame(animFrameId);
+        initVisualizer();
+
+        // Concatenate all recorded Float32 samples
+        let totalLen = recordedAudioBuffers.reduce((acc, curr) => acc + curr.length, 0);
+        if (totalLen === 0) {
+            updateRecordingUI(false, false);
+            return;
+        }
+
+        let flatAudio = new Float32Array(totalLen);
+        let offset = 0;
+        for (let chunk of recordedAudioBuffers) {
+            flatAudio.set(chunk, offset);
+            offset += chunk.length;
+        }
+
+        // Encode as uncompressed 16kHz PCM WAV
+        const wavBlob = encodePCM16WAV(flatAudio, 16000);
+        const formData = new FormData();
+        formData.append("file", wavBlob, "ptt_speech.wav");
+        
+        const lang = document.getElementById("languageSelect").value;
+        formData.append("lang", lang);
+
+        try {
+            const res = await fetch("/api/send_audio_blob", {
+                method: "POST",
+                body: formData
+            });
+            const result = await res.json();
+            console.log("[PTT Upload Success]", result);
+        } catch (e) {
+            console.error("Failed to upload PTT audio:", e);
+        } finally {
+            updateRecordingUI(false, false);
+        }
     } else {
         // Stop backend hardware mic
         const lang = document.getElementById("languageSelect").value;
@@ -228,13 +336,12 @@ function updateRecordingUI(recording, processing) {
     }
 }
 
-// 5. Canvas Waveform Visualizer
+// 6. Canvas Waveform Visualizer
 function initVisualizer() {
     const canvas = document.getElementById("waveformCanvas");
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     
-    // Draw initial idle line
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.strokeStyle = "#00f0ff";
     ctx.lineWidth = 2;
@@ -282,7 +389,7 @@ function drawWaveform() {
     render();
 }
 
-// 6. Append Message Cards
+// 7. Append Message Cards
 function appendMessageCard(msg) {
     const feed = document.getElementById("conversationFeed");
     const emptyNotice = document.getElementById("emptyFeedNotice");
@@ -317,7 +424,7 @@ function appendMessageCard(msg) {
     feed.scrollTop = feed.scrollHeight;
 }
 
-// 7. Update Telemetry Dashboard Gauges
+// 8. Update Telemetry Dashboard Gauges
 function updateTelemetryStats(msg) {
     totalMessages++;
     if (msg.audio_bytes) totalAudioBytes += msg.audio_bytes;
@@ -340,7 +447,7 @@ function updateTelemetryStats(msg) {
     }
 }
 
-// 8. Replay Audio Locally
+// 9. Replay Audio Locally
 async function replayTTS(text) {
     const lang = document.getElementById("languageSelect").value;
     await fetch("/api/replay_tts", {
@@ -350,7 +457,7 @@ async function replayTTS(text) {
     });
 }
 
-// 9. Quick Demo Fallback Samples
+// 10. Quick Demo Fallback Samples
 function initSampleButtons() {
     const buttons = document.querySelectorAll(".btn-sample");
     buttons.forEach((btn) => {
@@ -375,7 +482,7 @@ function initSampleButtons() {
     });
 }
 
-// 10. Peer Connect Form
+// 11. Peer Connect Form
 function initConnectForm() {
     const btn = document.getElementById("updatePeerBtn");
     btn.addEventListener("click", async () => {

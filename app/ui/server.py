@@ -57,6 +57,7 @@ def create_app(
     )
 
     ws_manager = WebSocketManager()
+    _event_history: List[Dict[str, Any]] = []
     
     # State
     _stt_engine: Optional[WhisperSTTEngine] = None
@@ -94,7 +95,9 @@ def create_app(
                 "e2e_ms": round(metrics.end_to_end_latency_ms, 1)
             }
         }
-        # Schedule broadcast on asyncio event loop
+        _event_history.append(event_data)
+        if len(_event_history) > 100:
+            _event_history.pop(0)
         asyncio.run_coroutine_threadsafe(ws_manager.broadcast(event_data), loop)
 
     def on_tx_callback(packet: iTantraPacket, metrics: PipelineMetrics):
@@ -117,6 +120,9 @@ def create_app(
                 "e2e_ms": round(metrics.end_to_end_latency_ms, 1)
             }
         }
+        _event_history.append(event_data)
+        if len(_event_history) > 100:
+            _event_history.pop(0)
         asyncio.run_coroutine_threadsafe(ws_manager.broadcast(event_data), loop)
 
     # Initialize Transceiver
@@ -236,19 +242,33 @@ def create_app(
             "audio_bytes": audio_bytes_len
         }
 
+    @app.get("/api/events")
+    async def get_events():
+        return _event_history
+
     @app.post("/api/send_audio_blob")
     async def send_audio_blob(file: UploadFile = File(...), lang: Optional[str] = Form(None)):
         """Handles audio recorded from the web browser microphone."""
+        import scipy.io.wavfile as wavfile
         target_lang = lang or _current_lang
         content = await file.read()
         audio_size_bytes = len(content)
         t1_start = time.time() - 2.0  # estimate
         
-        # Read audio file into numpy array using soundfile
+        # Read audio file into numpy array using soundfile or scipy
+        audio_data = None
+        sr = 16000
         try:
             audio_data, sr = sf.read(io.BytesIO(content))
         except Exception:
-            raise HTTPException(status_code=400, detail="Invalid audio format")
+            try:
+                sr, audio_data = wavfile.read(io.BytesIO(content))
+            except Exception as e:
+                print(f"[!] Audio decode error: {e}")
+                raise HTTPException(status_code=400, detail="Invalid audio format")
+
+        if audio_data is None or len(audio_data) == 0:
+            return {"status": "empty_audio"}
 
         stt = get_stt()
         transcript, stt_latency = stt.transcribe(audio_data, sample_rate=sr, language=target_lang)

@@ -155,9 +155,31 @@ class WhisperSTTEngine(BaseSTTEngine):
         data, sr = sf.read(file_path)
         return data, sr
 
+    def _clean_hallucinations(self, text: str) -> str:
+        """Filter out repetitive phrase loops and common Whisper silence hallucinations."""
+        import re
+        if not text:
+            return ""
+        
+        # Collapse phrases repeating 3 or more times (e.g. "let's go, let's go, let's go" -> "let's go")
+        cleaned = re.sub(r'(\b.+?\b)(?:[,\s]+\1){2,}', r'\1', text, flags=re.IGNORECASE)
+        
+        # Also clean repeating single words
+        cleaned = re.sub(r'\b(\w+)(?:\s+\1){2,}\b', r'\1', cleaned, flags=re.IGNORECASE)
+
+        # Filter out common Whisper hallucinations that occur on ambient silence
+        silence_hallucinations = [
+            "thank you.", "thank you", "thank you for watching", 
+            "thank you for watching.", "subtitles by", "bye bye", "amara.org"
+        ]
+        if cleaned.strip().lower() in silence_hallucinations:
+            return ""
+            
+        return cleaned.strip()
+
     def transcribe(self, audio: Union[np.ndarray, str], sample_rate: int = 16000, language: str = "en") -> Tuple[str, float]:
         """
-        Perform local STT inference on audio array or WAV file.
+        Perform local STT inference on audio array or WAV file with hallucination prevention.
         """
         # Handle file input vs array input
         if isinstance(audio, str):
@@ -166,10 +188,20 @@ class WhisperSTTEngine(BaseSTTEngine):
         else:
             audio_processed = self.preprocess_audio(audio, sample_rate, target_sr=16000)
 
-        # Build generate_kwargs for language direction
-        # Map common codes
+        # Silence / Energy gate: discard pure silence/ambient hiss (< -45 dB)
+        rms = np.sqrt(np.mean(audio_processed**2)) if len(audio_processed) > 0 else 0.0
+        if rms < 0.003 or len(audio_processed) < 1600:  # less than 0.1s or pure silence
+            return "", 0.001
+
+        # Build generate_kwargs with anti-repetition penalty
         lang_code = "english" if language.lower() in ["en", "english"] else ("tamil" if language.lower() in ["ta", "tamil"] else language)
-        generate_kwargs = {"language": lang_code, "task": "transcribe"}
+        generate_kwargs = {
+            "language": lang_code,
+            "task": "transcribe",
+            "no_repeat_ngram_size": 3,
+            "repetition_penalty": 1.25,
+            "max_new_tokens": 96
+        }
 
         start_time = time.perf_counter()
         result = self._pipeline(
@@ -178,5 +210,6 @@ class WhisperSTTEngine(BaseSTTEngine):
         )
         latency = time.perf_counter() - start_time
         
-        transcript = result.get("text", "").strip()
-        return transcript, latency
+        raw_transcript = result.get("text", "").strip()
+        cleaned_transcript = self._clean_hallucinations(raw_transcript)
+        return cleaned_transcript, latency

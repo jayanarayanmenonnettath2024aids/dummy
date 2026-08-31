@@ -275,7 +275,7 @@ def create_app(
         t2_stt_finish = time.time()
 
         if not transcript.strip():
-            transcript = "[No Speech Detected]"
+            return {"status": "no_speech", "transcript": "", "audio_bytes": audio_size_bytes}
 
         success, packet, metrics = transceiver.transmit(
             transcript=transcript,

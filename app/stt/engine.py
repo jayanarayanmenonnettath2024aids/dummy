@@ -41,14 +41,27 @@ class WhisperSTTEngine(BaseSTTEngine):
         import warnings
         warnings.filterwarnings("ignore")
         os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
         from transformers import pipeline, logging
         logging.set_verbosity_error()
-        # Initialize the offline ASR pipeline
-        self._pipeline = pipeline(
-            "automatic-speech-recognition",
-            model=self.model_name,
-            device=self.device,
-        )
+        try:
+            # Load strictly from local offline cache
+            self._pipeline = pipeline(
+                "automatic-speech-recognition",
+                model=self.model_name,
+                device=self.device,
+                model_kwargs={"local_files_only": True}
+            )
+        except Exception:
+            # Fallback to online fetch if cache is empty on first run
+            os.environ.pop("HF_HUB_OFFLINE", None)
+            os.environ.pop("TRANSFORMERS_OFFLINE", None)
+            self._pipeline = pipeline(
+                "automatic-speech-recognition",
+                model=self.model_name,
+                device=self.device,
+            )
 
     def preprocess_audio(self, audio: np.ndarray, orig_sr: int, target_sr: int = 16000) -> np.ndarray:
         """Convert multi-channel audio to mono and resample to target_sr."""

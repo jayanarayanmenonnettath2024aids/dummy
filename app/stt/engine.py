@@ -46,15 +46,14 @@ class WhisperSTTEngine(BaseSTTEngine):
         from transformers import pipeline, logging
         logging.set_verbosity_error()
         try:
-            # Load strictly from local offline cache
+            # Load from offline cache
             self._pipeline = pipeline(
                 "automatic-speech-recognition",
                 model=self.model_name,
                 device=self.device,
-                model_kwargs={"local_files_only": True}
             )
         except Exception:
-            # Fallback to online fetch if cache is empty on first run
+            # If not in cache, temporarily enable online fetch
             os.environ.pop("HF_HUB_OFFLINE", None)
             os.environ.pop("TRANSFORMERS_OFFLINE", None)
             self._pipeline = pipeline(

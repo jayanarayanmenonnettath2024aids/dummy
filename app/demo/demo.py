@@ -27,8 +27,20 @@ class iTantraDemo:
     3. Distributed Receiver node (TCP Text Packet -> TTS -> Speaker)
     """
     def __init__(self, stt_engine: Optional[BaseSTTEngine] = None, tts_engine: Optional[BaseTTSEngine] = None):
-        self.stt = stt_engine or WhisperSTTEngine()
-        self.tts = tts_engine or LocalTTSEngine()
+        self._stt = stt_engine
+        self._tts = tts_engine
+
+    @property
+    def stt(self) -> BaseSTTEngine:
+        if self._stt is None:
+            self._stt = WhisperSTTEngine()
+        return self._stt
+
+    @property
+    def tts(self) -> BaseTTSEngine:
+        if self._tts is None:
+            self._tts = LocalTTSEngine()
+        return self._tts
 
     def run_local_loop(self, audio_source: str = "LIVE", sample_path: Optional[str] = None, language: str = "en"):
         """

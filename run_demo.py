@@ -56,18 +56,23 @@ def print_banner():
 def interactive_menu():
     print_banner()
     print(f"{Fore.YELLOW}Select Operation Mode:{Style.RESET_ALL}")
-    print("  [1] Single Node Local Loop  (Mic/Sample -> Local STT -> Local TTS -> Speaker)")
-    print("  [2] Transmitter Node (Device A)  (Mic/Sample -> Local STT -> TCP Text Packet)")
-    print("  [3] Receiver Node (Device B)     (TCP Text Packet -> Local TTS -> Speaker)")
-    print("  [4] Run Unit & Integration Test Suite")
-    print("  [5] Exit\n")
+    print(f"  {Fore.GREEN}{Style.BRIGHT}[1] Launch Tactical Walkie-Talkie Web UI (Recommended for Live Demo){Style.RESET_ALL}")
+    print("  [2] Single Node Local Loop  (Mic/Sample -> Local STT -> Local TTS -> Speaker)")
+    print("  [3] Transmitter Node (Device A)  (Mic/Sample -> Local STT -> TCP Text Packet)")
+    print("  [4] Receiver Node (Device B)     (TCP Text Packet -> Local TTS -> Speaker)")
+    print("  [5] Run Unit & Integration Test Suite")
+    print("  [6] Exit\n")
 
-    choice = input(f"{Fore.CYAN}Enter selection [1-5] (default: 1): {Style.RESET_ALL}").strip() or "1"
+    choice = input(f"{Fore.CYAN}Enter selection [1-6] (default: 1): {Style.RESET_ALL}").strip() or "1"
     
-    if choice == "5":
+    if choice == "1":
+        import run_ui
+        run_ui.main()
+        return
+    elif choice == "6":
         print("[*] Exiting iTantra.")
         sys.exit(0)
-    elif choice == "4":
+    elif choice == "5":
         import unittest
         loader = unittest.TestLoader()
         suite = loader.discover("tests")
@@ -83,7 +88,7 @@ def interactive_menu():
     language = "ta" if lang_choice == "2" else "en"
 
     # For Receiver node, no audio source selection needed
-    if choice == "3":
+    if choice == "4":
         port_input = input(f"{Fore.CYAN}Enter listening port (default: 65432): {Style.RESET_ALL}").strip() or "65432"
         demo = iTantraDemo()
         demo.run_receiver(host="0.0.0.0", port=int(port_input))
@@ -113,9 +118,9 @@ def interactive_menu():
 
     demo = iTantraDemo()
 
-    if choice == "1":
+    if choice == "2":
         demo.run_local_loop(audio_source=audio_source, sample_path=sample_path, language=language)
-    elif choice == "2":
+    elif choice == "3":
         host_input = input(f"{Fore.CYAN}Enter Receiver IP (default: 127.0.0.1): {Style.RESET_ALL}").strip() or "127.0.0.1"
         port_input = input(f"{Fore.CYAN}Enter Receiver Port (default: 65432): {Style.RESET_ALL}").strip() or "65432"
         demo.run_transmitter(host=host_input, port=int(port_input), audio_source=audio_source, sample_path=sample_path, language=language)

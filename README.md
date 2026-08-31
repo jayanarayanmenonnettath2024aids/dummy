@@ -127,16 +127,38 @@ iTantra/
 pip install -r requirements.txt
 ```
 
-### 5.2 Running the Interactive Demo Menu
-Simply execute:
+---
+
+### 5.2 Option A: Tactical Walkie-Talkie Web UI (Recommended for Live Demo)
+
+Start the Web UI on each laptop:
+
+```bash
+# On Laptop 1 (e.g. 192.168.1.10):
+python run_ui.py --web-port 8000 --tcp-port 65432 --peer-host 192.168.1.20 --peer-port 65432
+
+# On Laptop 2 (e.g. 192.168.1.20):
+python run_ui.py --web-port 8000 --tcp-port 65432 --peer-host 192.168.1.10 --peer-port 65432
+```
+> **Features**:
+> - Opens `http://localhost:8000` automatically in your browser.
+> - **Push-to-Talk (PTT)**: Hold **SPACEBAR** or click & hold the PTT button to transmit voice.
+> - **Bidirectional / Half-Duplex**: Either person can speak at any time; incoming speech automatically plays through the speakers.
+> - **Live Mission Control Telemetry**: Real-time waveform, data payload comparison (>99.7% reduction), and STT/Net/TTS latency waterfall charts.
+> - **One-Click Fallback Voice Samples**: Test emergency, checkpoint, and tactical voice samples with a single click.
+
+---
+
+### 5.3 Option B: Interactive Terminal Menu
 ```bash
 python run_demo.py
 ```
 This presents a menu to select:
-1. **Single Node Local Loop**: Mic/Sample → STT → TTS → Speaker
-2. **Transmitter Node (Device A)**: Mic/Sample → STT → Network Packet
-3. **Receiver Node (Device B)**: Network Packet → TTS → Speaker
-4. **Run Unit & Integration Test Suite**
+1. **Launch Tactical Walkie-Talkie Web UI**
+2. **Single Node Local Loop**: Mic/Sample → STT → TTS → Speaker
+3. **Transmitter Node (Device A)**: Mic/Sample → STT → Network Packet
+4. **Receiver Node (Device B)**: Network Packet → TTS → Speaker
+5. **Run Unit & Integration Test Suite**
 
 ---
 

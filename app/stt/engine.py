@@ -35,7 +35,59 @@ class WhisperSTTEngine(BaseSTTEngine):
         self.model_name = model_name
         self.device = device
         self._pipeline = None
+        self._recording_stream = None
+        self._recorded_frames = []
+        self._is_recording = False
         self._initialize_model()
+
+    def start_dynamic_recording(self, sample_rate: int = 16000):
+        """Start dynamic audio stream recording for Push-To-Talk."""
+        if self._is_recording:
+            return
+        self._recorded_frames = []
+        self._is_recording = True
+        
+        def callback(indata, frames, time_info, status):
+            if self._is_recording:
+                self._recorded_frames.append(indata.copy())
+
+        self._recording_stream = sd.InputStream(
+            samplerate=sample_rate,
+            channels=1,
+            dtype='float32',
+            callback=callback
+        )
+        self._recording_stream.start()
+
+    def stop_dynamic_recording(self) -> np.ndarray:
+        """Stop dynamic audio recording and return captured audio array."""
+        if not self._is_recording:
+            return np.array([], dtype=np.float32)
+        
+        self._is_recording = False
+        if self._recording_stream:
+            self._recording_stream.stop()
+            self._recording_stream.close()
+            self._recording_stream = None
+
+        if not self._recorded_frames:
+            return np.array([], dtype=np.float32)
+        
+        audio = np.concatenate(self._recorded_frames, axis=0).squeeze()
+        return audio
+
+    def record_microphone(self, duration_seconds: float = 4.0, sample_rate: int = 16000) -> np.ndarray:
+        """Record audio from the default input device for a fixed duration."""
+        print(f"[*] Recording for {duration_seconds}s (Speak now)...")
+        recording = sd.rec(
+            int(duration_seconds * sample_rate),
+            samplerate=sample_rate,
+            channels=1,
+            dtype='float32'
+        )
+        sd.wait()
+        print("[*] Recording complete.")
+        return recording.squeeze()
 
     def _initialize_model(self):
         import warnings

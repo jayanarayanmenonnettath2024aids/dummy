@@ -9,12 +9,22 @@ from app.communication.tcp_transport import TCPTransport
 from app.communication.playback_controller import PriorityPlaybackController
 from app.tts.engine import BaseTTSEngine, LocalTTSEngine
 from app.metrics.metrics import PipelineMetrics
+from app.security.identity import NodeIdentity
+from app.security.trust_store import TrustStore
+from app.security.authenticator import (
+    PacketAuthenticator,
+    SecurityError,
+    AuthenticationFailedError,
+    ReplayAttackError,
+    UntrustedPeerError
+)
 
 class PeerTransceiver:
     """
-    Continuous Bidirectional Transceiver (Walkie-Talkie Node) with Alert Priority.
-    Listens for incoming packets concurrently on a background thread
-    and routes incoming messages through the PriorityPlaybackController.
+    Continuous Bidirectional Transceiver (Walkie-Talkie Node) with Alert Priority & Security Defense.
+    Listens for incoming packets concurrently on a background thread,
+    verifies cryptographic authenticity and replay window BEFORE priority queuing,
+    and routes valid incoming messages through the PriorityPlaybackController.
     """
     def __init__(
         self,
@@ -27,7 +37,10 @@ class PeerTransceiver:
         playback_controller: Optional[PriorityPlaybackController] = None,
         on_message_received: Optional[Callable[[iTantraPacket, PipelineMetrics], None]] = None,
         on_message_sent: Optional[Callable[[iTantraPacket, PipelineMetrics], None]] = None,
-        transport_format: str = "binary"
+        transport_format: str = "binary",
+        authenticator: Optional[PacketAuthenticator] = None,
+        node_identity: Optional[NodeIdentity] = None,
+        enforce_security: bool = False
     ):
         self.listen_host = listen_host
         self.listen_port = listen_port
@@ -40,6 +53,12 @@ class PeerTransceiver:
         self.playback_controller = playback_controller
         self.on_message_received = on_message_received
         self.on_message_sent = on_message_sent
+        
+        # Security components
+        self.node_identity = node_identity
+        self.authenticator = authenticator
+        self.enforce_security = enforce_security
+        self.security_violations_count = 0
         
         self.is_running = False
         self._server_transport: Optional[TCPTransport] = None
@@ -83,10 +102,20 @@ class PeerTransceiver:
                         t1_capture_start=packet.t1_capture_start,
                         t2_stt_finish=packet.t2_stt_finish,
                         t3_tx_start=packet.t3_tx_start,
-                        t4_rx_finish=packet.t4_rx_finish
+                        t4_rx_finish=packet.t4_rx_finish,
+                        auth_tag=getattr(packet, "auth_tag", "")
                     )
                 else:
                     packet_v2 = packet
+
+                # SECURITY GATE: Verify authenticity & replay defense BEFORE priority queue or TTS
+                if self.enforce_security and self.authenticator:
+                    try:
+                        self.authenticator.verify_and_authenticate(packet_v2)
+                    except SecurityError as sec_err:
+                        self.security_violations_count += 1
+                        print(f"[SECURITY ALERT] Rejected malicious/unauthenticated packet from '{packet_v2.sender_id}': {sec_err}")
+                        continue  # DROP PACKET SAFELY
 
                 # If PriorityPlaybackController is attached, enqueue for priority playback
                 if self.playback_controller:
@@ -141,10 +170,11 @@ class PeerTransceiver:
         t1_start: float = 0.0,
         t2_stt: float = 0.0,
         target_host: Optional[str] = None,
-        target_port: Optional[int] = None
+        target_port: Optional[int] = None,
+        signing_key: Optional[bytes] = None
     ) -> Tuple[bool, Optional[iTantraPacketV2], Optional[PipelineMetrics]]:
         """
-        Send a transcript packet with designated message type and priority.
+        Send a transcript packet with designated message type, priority, and HMAC authentication tag.
         """
         host = target_host or self.peer_host
         port = target_port or self.peer_port
@@ -161,6 +191,11 @@ class PeerTransceiver:
             t1_capture_start=t1_start or time.time(),
             t2_stt_finish=t2_stt or time.time()
         )
+
+        # Cryptographic signing if key/authenticator available
+        key_to_use = signing_key or (self.node_identity.secret_key if self.node_identity else None)
+        if key_to_use and self.authenticator:
+            self.authenticator.sign_packet(packet, key_to_use)
 
         client = TCPTransport(host=host, port=port, is_server=False, timeout=10.0, transport_format=self.transport_format)
         success, net_latency, bytes_sent = client.send(packet)

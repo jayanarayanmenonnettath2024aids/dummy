@@ -2,28 +2,30 @@ import struct
 import json
 import time
 import uuid
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, Union
 
 MAGIC_HEADER = b"IT"
 PROTOCOL_VERSION_V2 = 2
 
-# Maximum limits to defend against resource exhaustion & malformed attacks
-MAX_PACKET_SIZE = 131072        # 128 KiB frame limit
-MAX_PAYLOAD_SIZE = 65535        # 64 KiB text (uint16 max)
-MAX_SENDER_ID_SIZE = 255        # 255 bytes (uint8)
-MAX_SESSION_ID_SIZE = 255       # 255 bytes (uint8)
-MAX_AUTH_TAG_SIZE = 512         # 512 bytes
+# Production Size Bounds
+MAX_PACKET_BYTES = 65536        # 64 KiB frame limit
+MAX_PACKET_SIZE = MAX_PACKET_BYTES # Backward compatibility alias
+MAX_TEXT_BYTES = 65535          # 64 KiB text (uint16 max)
+MAX_NODE_ID_BYTES = 64          # 64 bytes
+MAX_SESSION_ID_BYTES = 64       # 64 bytes
+HMAC_RAW_BYTES = 32             # 32 raw binary bytes (256-bit digest)
+MAX_AUTH_TAG_SIZE = 64          # Max allowable tag buffer (allows 32 raw bytes or 64 hex chars)
 
 class iTantraPacketV2:
     """
-    Compact, Endian-Defined Binary Transport Packet Protocol (V2.0) with Cryptographic Security.
+    Production Compact, Endian-Defined Binary Transport Packet Protocol (V2.0).
     
-    Layout:
+    Wire Layout:
     - Fixed Header (25 bytes):
         Magic (2B, 'IT') | Version (1B, 2) | MsgType (1B) | Priority (1B) |
         Language (2B) | Seq (4B) | Timestamp (8B double) | AudioBytes (4B) | AuthTagLen (2B)
     - Variable Body:
-        AuthTag (AuthTagLen bytes) |
+        AuthTag (AuthTagLen bytes, 32 raw bytes for production HMAC-SHA256) |
         SenderLen (1B) | SenderID (SenderLen bytes) |
         SessionLen (1B) | SessionID (SessionLen bytes) |
         PayloadLen (2B) | Payload (PayloadLen bytes)
@@ -77,7 +79,7 @@ class iTantraPacketV2:
         priority: int = PRIORITY_NORMAL,
         audio_size_bytes: int = 0,
         timestamp: Optional[float] = None,
-        auth_tag: str = "",
+        auth_tag: Union[bytes, str] = b"",
         # Telemetry timestamp compatibility hooks
         t1_capture_start: float = 0.0,
         t2_stt_finish: float = 0.0,
@@ -95,7 +97,7 @@ class iTantraPacketV2:
         self.payload = str(payload)
         self.audio_size_bytes = int(audio_size_bytes)
         self.timestamp = float(timestamp if timestamp is not None else time.time())
-        self.auth_tag = str(auth_tag)
+        self.auth_tag = auth_tag
 
         # Telemetry timestamps
         self.t1_capture_start = float(t1_capture_start or self.timestamp)
@@ -130,20 +132,35 @@ class iTantraPacketV2:
         body.extend(payload_bytes)
         return header + bytes(body)
 
+    def _get_raw_auth_bytes(self) -> bytes:
+        """Helper to get raw binary bytes from auth_tag (handling hex string or raw bytes)."""
+        if not self.auth_tag:
+            return b""
+        if isinstance(self.auth_tag, (bytes, bytearray)):
+            return bytes(self.auth_tag)
+        if isinstance(self.auth_tag, str):
+            if len(self.auth_tag) == 64:
+                try:
+                    return bytes.fromhex(self.auth_tag)
+                except ValueError:
+                    return self.auth_tag.encode("utf-8")
+            return self.auth_tag.encode("utf-8")
+        return b""
+
     def to_binary(self) -> bytes:
         """Serialize packet into compact, deterministic big-endian binary bytes."""
         sender_bytes = self.sender_id.encode("utf-8")
         session_bytes = self.session_id.encode("utf-8")
         payload_bytes = self.payload.encode("utf-8")
-        auth_bytes = self.auth_tag.encode("utf-8") if self.auth_tag else b""
+        auth_bytes = self._get_raw_auth_bytes()
         lang_bytes = self.language.ljust(2, "\x00").encode("ascii", errors="ignore")[:2]
 
-        if len(sender_bytes) > MAX_SENDER_ID_SIZE:
-            sender_bytes = sender_bytes[:MAX_SENDER_ID_SIZE]
-        if len(session_bytes) > MAX_SESSION_ID_SIZE:
-            session_bytes = session_bytes[:MAX_SESSION_ID_SIZE]
-        if len(payload_bytes) > MAX_PAYLOAD_SIZE:
-            payload_bytes = payload_bytes[:MAX_PAYLOAD_SIZE]
+        if len(sender_bytes) > MAX_NODE_ID_BYTES:
+            sender_bytes = sender_bytes[:MAX_NODE_ID_BYTES]
+        if len(session_bytes) > MAX_SESSION_ID_BYTES:
+            session_bytes = session_bytes[:MAX_SESSION_ID_BYTES]
+        if len(payload_bytes) > MAX_TEXT_BYTES:
+            payload_bytes = payload_bytes[:MAX_TEXT_BYTES]
         if len(auth_bytes) > MAX_AUTH_TAG_SIZE:
             auth_bytes = auth_bytes[:MAX_AUTH_TAG_SIZE]
 
@@ -176,8 +193,8 @@ class iTantraPacketV2:
         variable_body.extend(payload_bytes)
 
         full_packet = fixed_header + bytes(variable_body)
-        if len(full_packet) > MAX_PACKET_SIZE:
-            raise ValueError(f"Packet exceeds maximum allowable size: {len(full_packet)} > {MAX_PACKET_SIZE}")
+        if len(full_packet) > MAX_PACKET_BYTES:
+            raise ValueError(f"Packet exceeds maximum allowable size: {len(full_packet)} > {MAX_PACKET_BYTES}")
 
         return full_packet
 
@@ -187,8 +204,8 @@ class iTantraPacketV2:
         if not raw_bytes or not isinstance(raw_bytes, (bytes, bytearray)):
             raise ValueError("Invalid raw packet bytes: input is empty or not bytes")
 
-        if len(raw_bytes) > MAX_PACKET_SIZE:
-            raise ValueError(f"Oversized packet rejected: {len(raw_bytes)} bytes exceeds limit {MAX_PACKET_SIZE}")
+        if len(raw_bytes) > MAX_PACKET_BYTES:
+            raise ValueError(f"Oversized packet rejected: {len(raw_bytes)} bytes exceeds limit {MAX_PACKET_BYTES}")
 
         if len(raw_bytes) < 25:
             raise ValueError(f"Packet too short / truncated: {len(raw_bytes)} bytes (min 25 bytes required)")
@@ -217,14 +234,18 @@ class iTantraPacketV2:
         offset = 25
 
         # Auth Tag
-        auth_tag = ""
+        auth_tag: Union[bytes, str] = b""
         if auth_len > 0:
             if offset + auth_len > len(raw_bytes):
                 raise ValueError("Truncated packet: insufficient bytes for auth tag")
-            try:
-                auth_tag = raw_bytes[offset : offset + auth_len].decode("utf-8")
-            except UnicodeDecodeError:
-                raise ValueError("Invalid UTF-8 in authentication tag")
+            tag_raw = raw_bytes[offset : offset + auth_len]
+            if auth_len == 32:
+                auth_tag = bytes(tag_raw)
+            else:
+                try:
+                    auth_tag = tag_raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    auth_tag = bytes(tag_raw)
             offset += auth_len
 
         # Sender ID
@@ -232,8 +253,8 @@ class iTantraPacketV2:
             raise ValueError("Truncated packet: missing sender ID length")
         sender_len = raw_bytes[offset]
         offset += 1
-        if sender_len > MAX_SENDER_ID_SIZE:
-            raise ValueError(f"Sender ID length exceeds limit: {sender_len} > {MAX_SENDER_ID_SIZE}")
+        if sender_len > MAX_NODE_ID_BYTES:
+            raise ValueError(f"Sender ID length exceeds limit: {sender_len} > {MAX_NODE_ID_BYTES}")
         if offset + sender_len > len(raw_bytes):
             raise ValueError("Truncated packet: insufficient bytes for sender ID")
         try:
@@ -247,8 +268,8 @@ class iTantraPacketV2:
             raise ValueError("Truncated packet: missing session ID length")
         session_len = raw_bytes[offset]
         offset += 1
-        if session_len > MAX_SESSION_ID_SIZE:
-            raise ValueError(f"Session ID length exceeds limit: {session_len} > {MAX_SESSION_ID_SIZE}")
+        if session_len > MAX_SESSION_ID_BYTES:
+            raise ValueError(f"Session ID length exceeds limit: {session_len} > {MAX_SESSION_ID_BYTES}")
         if offset + session_len > len(raw_bytes):
             raise ValueError("Truncated packet: insufficient bytes for session ID")
         try:
@@ -263,8 +284,8 @@ class iTantraPacketV2:
         payload_len = struct.unpack("!H", raw_bytes[offset : offset + 2])[0]
         offset += 2
 
-        if payload_len > MAX_PAYLOAD_SIZE:
-            raise ValueError(f"Oversized payload rejected: {payload_len} > {MAX_PAYLOAD_SIZE}")
+        if payload_len > MAX_TEXT_BYTES:
+            raise ValueError(f"Oversized payload rejected: {payload_len} > {MAX_TEXT_BYTES}")
 
         if offset + payload_len > len(raw_bytes):
             raise ValueError(f"Truncated packet: expected {payload_len} payload bytes, got {len(raw_bytes) - offset}")
@@ -290,6 +311,8 @@ class iTantraPacketV2:
 
     def to_dict(self) -> Dict[str, Any]:
         """Dictionary format for JSON serialization and development logs."""
+        raw_tag = self._get_raw_auth_bytes()
+        hex_tag = raw_tag.hex() if raw_tag else ""
         return {
             "ver": self.version,
             "type": self.message_type,
@@ -307,12 +330,21 @@ class iTantraPacketV2:
             "t2": self.t2_stt_finish,
             "t3": self.t3_tx_start,
             "t4": self.t4_rx_finish,
-            "sec_tag": self.auth_tag
+            "sec_tag": hex_tag
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "iTantraPacketV2":
         """Reconstruct from dictionary format."""
+        tag_val = data.get("sec_tag", "")
+        if isinstance(tag_val, str) and len(tag_val) == 64:
+            try:
+                auth_tag = bytes.fromhex(tag_val)
+            except ValueError:
+                auth_tag = tag_val
+        else:
+            auth_tag = tag_val
+
         return cls(
             payload=data.get("text", ""),
             language=data.get("lang", "en"),
@@ -328,7 +360,7 @@ class iTantraPacketV2:
             t3_tx_start=float(data.get("t3", 0.0)),
             t4_rx_finish=float(data.get("t4", 0.0)),
             version=str(data.get("ver", "2.0")),
-            auth_tag=data.get("sec_tag", "")
+            auth_tag=auth_tag
         )
 
     def to_json(self) -> str:

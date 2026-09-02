@@ -1,7 +1,7 @@
 import hmac
 import hashlib
 import time
-from typing import Dict, Tuple, Optional, Any
+from typing import Dict, Tuple, Optional, Any, Union
 from app.security.trust_store import TrustStore
 
 class SecurityError(Exception):
@@ -67,8 +67,8 @@ class ReplayWindow:
 
 class PacketAuthenticator:
     """
-    Standard Authenticated Cryptography & Replay Defense Engine for iTantra packets.
-    Uses standard HMAC-SHA256 over entire binary frame and enforces sliding replay windows.
+    Production Authenticated Cryptography & Replay Defense Engine for iTantra packets.
+    Uses standard HMAC-SHA256 (32 raw binary bytes wire tag) and enforces sliding replay windows.
     """
     MAX_PACKET_AGE_SECONDS = 30.0  # Freshness window
     MAX_FUTURE_SKEW_SECONDS = 5.0  # Clock skew allowance
@@ -78,24 +78,34 @@ class PacketAuthenticator:
         # Map of (sender_id, session_id) -> ReplayWindow
         self._replay_windows: Dict[Tuple[str, str], ReplayWindow] = {}
 
+    def compute_raw_tag(self, key: bytes, data_to_sign: bytes) -> bytes:
+        """Compute standard HMAC-SHA256 raw 32-byte binary digest."""
+        if not key or not data_to_sign:
+            return b""
+        return hmac.new(key, data_to_sign, hashlib.sha256).digest()
+
     def compute_tag(self, key: bytes, data_to_sign: bytes) -> str:
-        """Compute standard HMAC-SHA256 hex digest (32 bytes / 64 hex chars)."""
+        """Compute standard HMAC-SHA256 hex digest (64 hex characters) for JSON / logs."""
         if not key or not data_to_sign:
             return ""
         return hmac.new(key, data_to_sign, hashlib.sha256).hexdigest()
 
-    def sign_packet(self, packet_v2, secret_key: bytes) -> str:
-        """Signs an iTantraPacketV2 instance with HMAC-SHA256."""
+    def sign_packet(self, packet_v2, secret_key: bytes, raw_binary: bool = True) -> Union[bytes, str]:
+        """Signs an iTantraPacketV2 instance with HMAC-SHA256 (32 raw bytes by default)."""
         if not secret_key:
-            return ""
+            return b"" if raw_binary else ""
         data_to_sign = packet_v2._get_bytes_to_authenticate()
-        tag = self.compute_tag(secret_key, data_to_sign)
+        if raw_binary:
+            tag = self.compute_raw_tag(secret_key, data_to_sign)
+        else:
+            tag = self.compute_tag(secret_key, data_to_sign)
         packet_v2.auth_tag = tag
         return tag
 
     def verify_and_authenticate(self, packet_v2, custom_key: Optional[bytes] = None) -> bool:
         """
         Verifies authenticity, integrity, timestamp freshness, and replay status of an incoming packet.
+        Supports both 32-byte raw binary digests and 64-character hex strings seamlessly.
         Raises SecurityError on violation.
         """
         sender_id = packet_v2.sender_id
@@ -109,14 +119,38 @@ class PacketAuthenticator:
         if not secret_key:
             raise UntrustedPeerError(f"Peer '{sender_id}' is not trusted or has no pairing key in TrustStore.")
 
-        # 2. Authentication Tag Presence
-        if not auth_tag or len(auth_tag) < 32:
-            raise MalformedSecurityTagError(f"Missing or malformed HMAC authentication tag on packet from '{sender_id}'.")
+        # 2. Authentication Tag Presence & Normalization
+        if not auth_tag:
+            raise MalformedSecurityTagError(f"Missing HMAC authentication tag on packet from '{sender_id}'.")
 
-        # 3. Cryptographic Integrity (HMAC-SHA256)
+        # Convert tag to raw 32 bytes for comparison
+        if isinstance(auth_tag, str):
+            if len(auth_tag) == 64:
+                try:
+                    auth_bytes = bytes.fromhex(auth_tag)
+                except ValueError:
+                    raise MalformedSecurityTagError("Invalid hexadecimal characters in authentication tag.")
+            elif len(auth_tag) == 32:
+                auth_bytes = auth_tag.encode("latin-1")
+            else:
+                raise MalformedSecurityTagError(f"Invalid authentication tag length: {len(auth_tag)} (expected 32 raw bytes or 64 hex chars).")
+        elif isinstance(auth_tag, (bytes, bytearray)):
+            if len(auth_tag) == 32:
+                auth_bytes = bytes(auth_tag)
+            elif len(auth_tag) == 64:
+                try:
+                    auth_bytes = bytes.fromhex(auth_tag.decode("ascii"))
+                except Exception:
+                    raise MalformedSecurityTagError("Invalid hexadecimal bytes in authentication tag.")
+            else:
+                raise MalformedSecurityTagError(f"Invalid authentication tag byte length: {len(auth_tag)} (expected 32 raw bytes).")
+        else:
+            raise MalformedSecurityTagError(f"Unsupported authentication tag type: {type(auth_tag)}")
+
+        # 3. Cryptographic Integrity (HMAC-SHA256 32-byte raw digest)
         data_to_sign = packet_v2._get_bytes_to_authenticate()
-        expected_tag = self.compute_tag(secret_key, data_to_sign)
-        if not hmac.compare_digest(auth_tag, expected_tag):
+        expected_raw_tag = self.compute_raw_tag(secret_key, data_to_sign)
+        if not hmac.compare_digest(auth_bytes, expected_raw_tag):
             raise AuthenticationFailedError(
                 f"HMAC integrity verification failed for packet seq #{seq} from '{sender_id}'. "
                 f"Packet was tampered with in transit (payload/priority/timestamp/headers modified)."

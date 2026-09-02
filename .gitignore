@@ -20,4 +20,8 @@ Thumbs.db
 
 # Temporary audio artifacts
 *.tmp.wav
+*.wav
 itantra_tts_*.wav
+
+# Large generated PyTorch test weights (downloaded via Hugging Face cache)
+models/

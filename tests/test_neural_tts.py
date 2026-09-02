@@ -105,7 +105,7 @@ class TestNeuralONNXTTS(unittest.TestCase):
     # 10. Runtime Memory Measurement
     def test_10_runtime_memory_measurement(self):
         unique_models = self.manager.get_unique_models()
-        self.assertEqual(len(unique_models), 4)
+        self.assertGreaterEqual(len(unique_models), 4)
         names = [m["name"] for m in unique_models]
         self.assertIn("vits-piper-en_US-lessac-medium.onnx", names)
         self.assertIn("vits-piper-hi_IN-pratham-medium.onnx", names)

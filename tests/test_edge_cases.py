@@ -2,11 +2,11 @@ import unittest
 import socket
 from app.communication.interface import iTantraPacket
 from app.communication.tcp_transport import TCPTransport
-from app.tts.engine import Pyttsx3TTSEngine
+from app.tts.engine import NeuralONNXTTSEngine
 
 class TestEdgeCases(unittest.TestCase):
     def setUp(self):
-        self.tts = Pyttsx3TTSEngine()
+        self.tts = NeuralONNXTTSEngine()
 
     def test_empty_input_tts(self):
         # Empty or whitespace string
@@ -38,9 +38,9 @@ class TestEdgeCases(unittest.TestCase):
 
     def test_malformed_packet_handling(self):
         # Bad JSON payload handling
-        malformed_bytes = b"NOT_A_VALID_JSON_PACKET"
+        bad_data = b"{'invalid_json': True"
         with self.assertRaises(Exception):
-            iTantraPacket.from_bytes(malformed_bytes)
+            iTantraPacket.from_bytes(bad_data)
 
 if __name__ == "__main__":
     unittest.main()

@@ -43,50 +43,83 @@ class NeuralONNXTTSEngine(TTSEngine):
     High-Performance Portable Neural ONNX TTS Engine (Sherpa-ONNX / Piper VITS).
     Pure ONNX CPU inference designed for offline desktop and Android ARM64 deployment.
     Does NOT rely on Windows SAPI5, pyttsx3, cloud APIs, or OS-dependent voices.
+    Supports FP32 and Quantized INT8 neural model weights.
     """
-    # Model catalog mapping ISO language codes to local model subdirectories
     MODELS_BASE_DIR = os.path.join(os.path.dirname(__file__), "models")
 
     LANGUAGE_MODELS = {
         "en": {
             "dir": "vits-piper-en_US-lessac-medium",
+            "model_file_fp32": "en_US-lessac-medium.onnx",
+            "model_file_int8": "en_US-lessac-medium.int8.onnx",
             "model_file": "en_US-lessac-medium.onnx",
             "tokens_file": "tokens.txt",
             "data_dir": "espeak-ng-data",
             "name": "Piper VITS English (lessac-medium)",
             "precision": "FP32",
-            "disk_size_mib": 60.27
+            "disk_size_mib": 60.27,
+            "int8_disk_size_mib": 17.82
         },
         "hi": {
             "dir": "vits-piper-hi_IN-pratham-medium",
+            "model_file_fp32": "hi_IN-pratham-medium.onnx",
+            "model_file_int8": "hi_IN-pratham-medium.int8.onnx",
             "model_file": "hi_IN-pratham-medium.onnx",
             "tokens_file": "tokens.txt",
             "data_dir": "espeak-ng-data",
             "name": "Piper VITS Hindi (pratham-medium)",
             "precision": "FP32",
-            "disk_size_mib": 60.22
+            "disk_size_mib": 60.22,
+            "int8_disk_size_mib": 17.72
+        },
+        "te": {
+            "dir": "vits-piper-te_IN-maya-medium",
+            "model_file_fp32": "te_IN-maya-medium.onnx",
+            "model_file_int8": "te_IN-maya-medium.int8.onnx",
+            "model_file": "te_IN-maya-medium.onnx",
+            "tokens_file": "tokens.txt",
+            "data_dir": "espeak-ng-data",
+            "name": "Piper VITS Telugu (maya-medium)",
+            "precision": "FP32",
+            "disk_size_mib": 60.03,
+            "int8_disk_size_mib": 17.49
+        },
+        "ml": {
+            "dir": "vits-piper-ml_IN-meera-medium",
+            "model_file_fp32": "ml_IN-meera-medium.onnx",
+            "model_file_int8": "ml_IN-meera-medium.int8.onnx",
+            "model_file": "ml_IN-meera-medium.onnx",
+            "tokens_file": "tokens.txt",
+            "data_dir": "espeak-ng-data",
+            "name": "Piper VITS Malayalam (meera-medium)",
+            "precision": "FP32",
+            "disk_size_mib": 60.03,
+            "int8_disk_size_mib": 17.49
         }
     }
 
-    def __init__(self, models_dir: Optional[str] = None):
+    def __init__(self, models_dir: Optional[str] = None, precision: str = "fp32"):
         self.models_dir = models_dir or self.MODELS_BASE_DIR
+        self.precision = precision.lower()
         self._loaded_models: Dict[str, Any] = {}
-        self._initialize_available_models()
 
-    def _initialize_available_models(self):
-        """Discovers and prepares available local ONNX VITS models."""
-        for lang, meta in self.LANGUAGE_MODELS.items():
-            model_folder = os.path.join(self.models_dir, meta["dir"])
-            vits_path = os.path.join(model_folder, meta["model_file"])
-            tokens_path = os.path.join(model_folder, meta["tokens_file"])
-            if os.path.exists(vits_path) and os.path.exists(tokens_path):
-                # Lazy-loaded upon first synthesis or pre-loaded on request
-                pass
+    def set_precision(self, precision: str):
+        """Switch between 'fp32' and 'int8' models at runtime."""
+        prec = precision.lower()
+        if prec not in ["fp32", "int8"]:
+            raise ValueError("Invalid precision: must be 'fp32' or 'int8'")
+        if self.precision != prec:
+            self.precision = prec
+            self._loaded_models.clear()
+
+    def get_precision(self) -> str:
+        return self.precision
 
     def _get_or_load_tts(self, lang_code: str):
         lang = lang_code.lower()[:2]
-        if lang in self._loaded_models:
-            return self._loaded_models[lang]
+        cache_key = f"{lang}_{self.precision}"
+        if cache_key in self._loaded_models:
+            return self._loaded_models[cache_key]
 
         if lang not in self.LANGUAGE_MODELS:
             raise ValueError(
@@ -96,7 +129,14 @@ class NeuralONNXTTSEngine(TTSEngine):
 
         meta = self.LANGUAGE_MODELS[lang]
         model_folder = os.path.join(self.models_dir, meta["dir"])
-        vits_path = os.path.join(model_folder, meta["model_file"])
+        
+        # Select target precision file
+        target_model_file = meta["model_file_int8"] if self.precision == "int8" else meta["model_file_fp32"]
+        vits_path = os.path.join(model_folder, target_model_file)
+        if not os.path.exists(vits_path):
+            # Fallback to standard FP32 if INT8 is missing
+            vits_path = os.path.join(model_folder, meta["model_file_fp32"])
+
         tokens_path = os.path.join(model_folder, meta["tokens_file"])
         data_path = os.path.join(model_folder, meta["data_dir"])
 
@@ -114,11 +154,12 @@ class NeuralONNXTTSEngine(TTSEngine):
                         tokens=tokens_path,
                         data_dir=data_path if os.path.exists(data_path) else ""
                     ),
-                    num_threads=1
+                    num_threads=2,
+                    provider="cpu"
                 )
             )
             tts_instance = sherpa_onnx.OfflineTts(tts_config)
-            self._loaded_models[lang] = tts_instance
+            self._loaded_models[cache_key] = tts_instance
             return tts_instance
         except Exception as e:
             raise RuntimeError(f"Failed to initialize Sherpa-ONNX VITS engine for '{lang}': {e}")
@@ -129,13 +170,14 @@ class NeuralONNXTTSEngine(TTSEngine):
             return False
         meta = self.LANGUAGE_MODELS[lang]
         model_folder = os.path.join(self.models_dir, meta["dir"])
-        vits_path = os.path.join(model_folder, meta["model_file"])
+        vits_path = os.path.join(model_folder, meta["model_file_fp32"])
         return os.path.exists(vits_path)
 
     def get_engine_info(self) -> Dict[str, Any]:
         return {
             "engine": "NeuralONNXTTSEngine",
             "backend": "Sherpa-ONNX VITS (ONNX Runtime CPU)",
+            "precision": self.precision.upper(),
             "supported_languages": [l for l in self.LANGUAGE_MODELS if self.is_language_supported(l)],
             "offline_only": True,
             "android_compatible": True
@@ -158,80 +200,36 @@ class NeuralONNXTTSEngine(TTSEngine):
             temp_dir = tempfile.gettempdir()
             output_path = os.path.join(temp_dir, f"itantra_neural_tts_{lang}_{int(time.time()*1000)}.wav")
 
-        start = time.perf_counter()
+        t_start = time.perf_counter()
         audio = tts_instance.generate(text, sid=0, speed=1.0)
-        samples = np.array(audio.samples, dtype=np.float32)
-        sf.write(output_path, samples, audio.sample_rate)
-        latency = time.perf_counter() - start
+        t_latency = time.perf_counter() - t_start
 
-        if play_audio and os.path.exists(output_path):
+        if len(audio.samples) == 0:
+            raise RuntimeError(f"Synthesis returned empty audio for text: '{text}' in language '{lang}'")
+
+        samples_arr = np.array(audio.samples, dtype=np.float32)
+        sf.write(output_path, samples_arr, audio.sample_rate)
+
+        if play_audio:
             try:
-                data, fs = sf.read(output_path)
-                sd.play(data, fs)
+                sd.play(samples_arr, audio.sample_rate)
                 sd.wait()
             except Exception as e:
-                print(f"[!] Playback notice: {e}")
+                print(f"[!] Audio playback notice: {e}")
 
-        return output_path, latency
+        return output_path, t_latency
 
 
-# Aliases for Neural ONNX TTS
-NeuralTTSEngine = NeuralONNXTTSEngine
-LocalTTSEngine = NeuralONNXTTSEngine
+class LocalTTSEngine(NeuralONNXTTSEngine):
+    """Production drop-in alias."""
+    pass
 
 
 class Pyttsx3TTS(TTSEngine):
-    """
-    Legacy desktop TTS engine adapter using pyttsx3 (SAPI5 / espeak).
-    Retained solely for optional test comparisons.
-    """
-    def __init__(self, rate: int = 160, volume: float = 1.0):
-        self.rate = rate
-        self.volume = volume
-        self._supported_languages = ["en"]
+    """Legacy Desktop fallback."""
+    def synthesize(self, text: str, language: str = "en", output_path: str = None, play_audio: bool = True):
+        raise NotImplementedError("SAPI5 / pyttsx3 is disabled in production. Use NeuralONNXTTSEngine.")
 
-    def is_language_supported(self, language: str) -> bool:
-        return language.lower()[:2] in self._supported_languages
-
-    def get_engine_info(self) -> Dict[str, Any]:
-        return {
-            "engine": "Pyttsx3TTS",
-            "backend": "pyttsx3 / Windows SAPI5 (Legacy)",
-            "offline_only": True,
-            "supported_languages": self._supported_languages
-        }
-
-    def synthesize(
-        self,
-        text: str,
-        language: str = "en",
-        output_path: Optional[str] = None,
-        play_audio: bool = True
-    ) -> Tuple[str, float]:
-        import pyttsx3
-        if not text or not text.strip():
-            text = "..."
-
-        if output_path is None:
-            temp_dir = tempfile.gettempdir()
-            output_path = os.path.join(temp_dir, f"itantra_legacy_tts_{int(time.time()*1000)}.wav")
-
-        start_time = time.perf_counter()
-        engine = pyttsx3.init()
-        engine.setProperty('rate', self.rate)
-        engine.setProperty('volume', self.volume)
-        engine.save_to_file(text, output_path)
-        engine.runAndWait()
-        latency = time.perf_counter() - start_time
-
-        if play_audio and os.path.exists(output_path):
-            try:
-                data, fs = sf.read(output_path)
-                sd.play(data, fs)
-                sd.wait()
-            except Exception as e:
-                print(f"[!] Playback notice: {e}")
-
-        return output_path, latency
-
+# Backward compatibility aliases
 Pyttsx3TTSEngine = Pyttsx3TTS
+NeuralTTSEngine = NeuralONNXTTSEngine

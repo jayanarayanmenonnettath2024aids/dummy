@@ -62,9 +62,9 @@ class LanguageProfile:
             "sample_rate": self.sample_rate,
             "stt_engine_type": self.stt_engine_type,
             "tts_engine_type": self.tts_engine_type,
-            "status": "SUPPORTED + TESTED" if (self.stt_tested and self.tts_tested) else (
-                "PARTIAL (STT TESTED)" if (self.stt_tested and not self.tts_tested) else (
-                    "INSTALLED — NOT VERIFIED" if (self.stt_installed or self.tts_installed) else "NOT AVAILABLE"
+            "status": "VERIFIED (FULL)" if (self.stt_tested and self.tts_tested) else (
+                "PARTIAL (STT ONLY)" if (self.stt_tested and not self.tts_tested) else (
+                    "INSTALLED — NOT VERIFIED" if (self.stt_installed or self.tts_installed) else "UNAVAILABLE"
                 )
             )
         }
@@ -140,7 +140,7 @@ DEFAULT_LANGUAGE_REGISTRY: Dict[str, LanguageProfile] = {
         code="ta",
         name="Tamil",
         stt_model="openai/whisper-tiny",
-        tts_model="None (NOT AVAILABLE - No verified neural ONNX voice)",
+        tts_model="None (UNAVAILABLE)",
         stt_installed=True,
         stt_tested=True,
         tts_installed=False,
@@ -156,7 +156,7 @@ DEFAULT_LANGUAGE_REGISTRY: Dict[str, LanguageProfile] = {
         code="gu",
         name="Gujarati",
         stt_model="openai/whisper-tiny",
-        tts_model="None (NOT AVAILABLE)",
+        tts_model="None (UNAVAILABLE)",
         stt_installed=True,
         stt_tested=False,
         tts_installed=False,
@@ -172,7 +172,7 @@ DEFAULT_LANGUAGE_REGISTRY: Dict[str, LanguageProfile] = {
         code="mr",
         name="Marathi",
         stt_model="openai/whisper-tiny",
-        tts_model="None (NOT AVAILABLE)",
+        tts_model="None (UNAVAILABLE)",
         stt_installed=True,
         stt_tested=False,
         tts_installed=False,
@@ -188,7 +188,7 @@ DEFAULT_LANGUAGE_REGISTRY: Dict[str, LanguageProfile] = {
         code="kn",
         name="Kannada",
         stt_model="openai/whisper-tiny",
-        tts_model="None (NOT AVAILABLE)",
+        tts_model="None (UNAVAILABLE)",
         stt_installed=True,
         stt_tested=False,
         tts_installed=False,
@@ -204,7 +204,7 @@ DEFAULT_LANGUAGE_REGISTRY: Dict[str, LanguageProfile] = {
         code="bn",
         name="Bengali",
         stt_model="openai/whisper-tiny",
-        tts_model="None (NOT AVAILABLE)",
+        tts_model="None (UNAVAILABLE)",
         stt_installed=True,
         stt_tested=False,
         tts_installed=False,
@@ -220,7 +220,7 @@ DEFAULT_LANGUAGE_REGISTRY: Dict[str, LanguageProfile] = {
         code="or",
         name="Odia",
         stt_model="None (UNSUPPORTED IN WHISPER VOCAB)",
-        tts_model="None (NOT AVAILABLE)",
+        tts_model="None (UNAVAILABLE)",
         stt_installed=False,
         stt_tested=False,
         tts_installed=False,

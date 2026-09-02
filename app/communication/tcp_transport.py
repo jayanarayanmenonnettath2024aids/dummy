@@ -7,13 +7,21 @@ from app.communication.interface import CommunicationInterface, iTantraPacket
 class TCPTransport(CommunicationInterface):
     """
     TCP Socket transport implementation for iTantra.
-    Can be run over localhost (single machine simulation) or local Wi-Fi / LAN (between two machines/nodes).
+    Supports both compact binary ('binary') and JSON ('json') formats with automatic receiver decoding.
     """
-    def __init__(self, host: str = "127.0.0.1", port: int = 65432, is_server: bool = False, timeout: float = 30.0):
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 65432,
+        is_server: bool = False,
+        timeout: float = 30.0,
+        transport_format: str = "binary"
+    ):
         self.host = host
         self.port = port
         self.is_server = is_server
         self.timeout = timeout
+        self.transport_format = transport_format
         self.sock: Optional[socket.socket] = None
         self.conn: Optional[socket.socket] = None
         self._init_socket()
@@ -38,14 +46,15 @@ class TCPTransport(CommunicationInterface):
             data.extend(packet)
         return bytes(data)
 
-    def send(self, packet: iTantraPacket) -> Tuple[bool, float, int]:
+    def send(self, packet: iTantraPacket, format_type: Optional[str] = None) -> Tuple[bool, float, int]:
         """
         Transmitter: Connects to the receiver, sends length-prefixed packet, receives ACK.
         """
         start_time = time.perf_counter()
         packet.t3_tx_start = time.time()
         
-        raw_bytes = packet.to_bytes()
+        fmt = format_type or self.transport_format
+        raw_bytes = packet.to_bytes(fmt)
         total_len = len(raw_bytes)
         prefix = struct.pack("!I", total_len)
         frame = prefix + raw_bytes

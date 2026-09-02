@@ -4,15 +4,17 @@ import threading
 from typing import Optional, Callable, Dict, Any, Tuple
 
 from app.communication.interface import iTantraPacket
+from app.communication.packet_v2 import iTantraPacketV2
 from app.communication.tcp_transport import TCPTransport
+from app.communication.playback_controller import PriorityPlaybackController
 from app.tts.engine import BaseTTSEngine, LocalTTSEngine
 from app.metrics.metrics import PipelineMetrics
 
 class PeerTransceiver:
     """
-    Continuous Bidirectional Transceiver (Walkie-Talkie Node).
+    Continuous Bidirectional Transceiver (Walkie-Talkie Node) with Alert Priority.
     Listens for incoming packets concurrently on a background thread
-    while allowing the user to transmit speech replies at any time.
+    and routes incoming messages through the PriorityPlaybackController.
     """
     def __init__(
         self,
@@ -22,16 +24,20 @@ class PeerTransceiver:
         peer_port: int = 65432,
         node_name: Optional[str] = None,
         tts_engine: Optional[BaseTTSEngine] = None,
+        playback_controller: Optional[PriorityPlaybackController] = None,
         on_message_received: Optional[Callable[[iTantraPacket, PipelineMetrics], None]] = None,
-        on_message_sent: Optional[Callable[[iTantraPacket, PipelineMetrics], None]] = None
+        on_message_sent: Optional[Callable[[iTantraPacket, PipelineMetrics], None]] = None,
+        transport_format: str = "binary"
     ):
         self.listen_host = listen_host
         self.listen_port = listen_port
         self.peer_host = peer_host
         self.peer_port = peer_port
         self.node_name = node_name or socket.gethostname()
+        self.transport_format = transport_format
         
         self.tts = tts_engine or LocalTTSEngine()
+        self.playback_controller = playback_controller
         self.on_message_received = on_message_received
         self.on_message_sent = on_message_sent
         
@@ -65,43 +71,61 @@ class PeerTransceiver:
                 if not packet:
                     continue
 
-                # We received a valid message
-                t5_start = time.perf_counter()
-                
-                # Reconstruct speech locally using offline TTS
-                out_wav, tts_latency = self.tts.synthesize(
-                    packet.payload,
-                    language=packet.language,
-                    play_audio=True
-                )
+                # Ensure packet is iTantraPacketV2 or compatible
+                if not isinstance(packet, iTantraPacketV2):
+                    packet_v2 = iTantraPacketV2(
+                        payload=packet.payload,
+                        language=packet.language,
+                        sender_id=packet.sender_id,
+                        sequence_number=packet.sequence_number,
+                        session_id=packet.session_id,
+                        audio_size_bytes=packet.audio_size_bytes,
+                        t1_capture_start=packet.t1_capture_start,
+                        t2_stt_finish=packet.t2_stt_finish,
+                        t3_tx_start=packet.t3_tx_start,
+                        t4_rx_finish=packet.t4_rx_finish
+                    )
+                else:
+                    packet_v2 = packet
+
+                # If PriorityPlaybackController is attached, enqueue for priority playback
+                if self.playback_controller:
+                    self.playback_controller.enqueue(packet_v2)
+                    tts_latency = 0.05
+                else:
+                    # Direct synthesis fallback
+                    out_wav, tts_latency = self.tts.synthesize(
+                        packet_v2.payload,
+                        language=packet_v2.language,
+                        play_audio=True
+                    )
                 
                 # Compute telemetry
-                stt_latency_ms = (packet.t2_stt_finish - packet.t1_capture_start) * 1000.0 if packet.t1_capture_start else 0.0
-                net_latency_ms = (packet.t4_rx_finish - packet.t3_tx_start) * 1000.0 if packet.t3_tx_start else rx_latency * 1000.0
+                stt_latency_ms = (packet_v2.t2_stt_finish - packet_v2.t1_capture_start) * 1000.0 if packet_v2.t1_capture_start else 0.0
+                net_latency_ms = (packet_v2.t4_rx_finish - packet_v2.t3_tx_start) * 1000.0 if packet_v2.t3_tx_start else rx_latency * 1000.0
                 if net_latency_ms < 0:
                     net_latency_ms = rx_latency * 1000.0
                 tts_latency_ms = tts_latency * 1000.0
                 total_e2e_ms = stt_latency_ms + net_latency_ms + tts_latency_ms
 
                 metrics = PipelineMetrics(
-                    audio_size_bytes=packet.audio_size_bytes,
-                    text_payload_bytes=packet.get_text_payload_bytes(),
+                    audio_size_bytes=packet_v2.audio_size_bytes,
+                    text_payload_bytes=packet_v2.get_text_payload_bytes(),
                     total_packet_bytes=bytes_recv,
                     stt_latency_ms=stt_latency_ms,
                     network_latency_ms=net_latency_ms,
                     tts_latency_ms=tts_latency_ms,
                     end_to_end_latency_ms=total_e2e_ms,
-                    transcript=packet.payload,
-                    language=packet.language,
+                    transcript=packet_v2.payload,
+                    language=packet_v2.language,
                     audio_transmitted=False
                 )
 
                 if self.on_message_received:
-                    self.on_message_received(packet, metrics)
+                    self.on_message_received(packet_v2, metrics)
 
             except Exception as e:
                 if self.is_running:
-                    # Ignore normal socket closure during shutdown
                     err_msg = str(e)
                     if "10038" not in err_msg and "closed" not in err_msg.lower():
                         print(f"[!] Transceiver receive notice: {e}")
@@ -111,30 +135,34 @@ class PeerTransceiver:
         self,
         transcript: str,
         language: str = "en",
+        message_type: int = iTantraPacketV2.MESSAGE_TYPE_NORMAL,
+        priority: int = iTantraPacketV2.PRIORITY_NORMAL,
         audio_size_bytes: int = 0,
         t1_start: float = 0.0,
         t2_stt: float = 0.0,
         target_host: Optional[str] = None,
         target_port: Optional[int] = None
-    ) -> Tuple[bool, Optional[iTantraPacket], Optional[PipelineMetrics]]:
+    ) -> Tuple[bool, Optional[iTantraPacketV2], Optional[PipelineMetrics]]:
         """
-        Send a transcript packet to the designated peer node.
+        Send a transcript packet with designated message type and priority.
         """
         host = target_host or self.peer_host
         port = target_port or self.peer_port
 
         self._sequence_number += 1
-        packet = iTantraPacket(
+        packet = iTantraPacketV2(
             payload=transcript,
             language=language,
             sender_id=self.node_name,
             sequence_number=self._sequence_number,
+            message_type=message_type,
+            priority=priority,
             audio_size_bytes=audio_size_bytes,
             t1_capture_start=t1_start or time.time(),
             t2_stt_finish=t2_stt or time.time()
         )
 
-        client = TCPTransport(host=host, port=port, is_server=False, timeout=10.0)
+        client = TCPTransport(host=host, port=port, is_server=False, timeout=10.0, transport_format=self.transport_format)
         success, net_latency, bytes_sent = client.send(packet)
 
         stt_latency_ms = (packet.t2_stt_finish - packet.t1_capture_start) * 1000.0 if packet.t1_capture_start else 0.0

@@ -1,6 +1,6 @@
 /**
  * iTantra Mission Control JavaScript Client
- * Native 16kHz PCM WAV Audio Capture, Push-To-Talk, WebSockets & HTTP Fallback
+ * Native 16kHz PCM WAV Audio Capture, Push-To-Talk, WebSockets & Alert Priority Queue
  */
 
 let ws = null;
@@ -14,14 +14,25 @@ let animFrameId = null;
 let isSpacePressed = false;
 let pollingInterval = null;
 
+// Selected Priority and Message Type
+let selectedPriority = 0; // 0=NORMAL, 1=ELEVATED, 2=ALERT, 3=DISTRESS
+let selectedMessageType = 1; // 1=NORMAL, 2=VOICE_NOTE, 3=ALERT, 4=DISTRESS
+
 // Cumulative Telemetry Stats
 let totalAudioBytes = 0;
 let totalTextBytes = 0;
 let totalMessages = 0;
 
+let currentActivePeer = { host: "127.0.0.1", port: 65432, node_id: null };
+let knownDevices = [];
+let currentOperatingMode = "walkie_talkie"; // "walkie_talkie" or "voice_mode"
+
 document.addEventListener("DOMContentLoaded", () => {
     initWebSocket();
     initStatus();
+    initDiscovery();
+    initModeSwitch();
+    initPrioritySelector();
     initVisualizer();
     initPTTControls();
     initKeyboardShortcuts();
@@ -53,7 +64,7 @@ function initWebSocket() {
         };
 
         ws.onclose = () => {
-            console.warn("[WS] Disconnected. Reconnecting in 2s (using HTTP polling fallback)...");
+            console.warn("[WS] Disconnected. Reconnecting in 2.5s...");
             updateConnectionBadge(false);
             setTimeout(initWebSocket, 2500);
         };
@@ -68,7 +79,6 @@ function initWebSocket() {
 }
 
 function startPollingFallback() {
-    // Poll /api/events every 1.5s to ensure UI stays synced even if WebSocket is blocked
     pollingInterval = setInterval(async () => {
         try {
             const res = await fetch("/api/events");
@@ -78,10 +88,12 @@ function startPollingFallback() {
                     events.forEach(handleServerEvent);
                 }
             }
-        } catch (e) {
-            // silent fallback
-        }
-    }, 1500);
+        } catch (e) {}
+
+        try {
+            await fetchDiscoveredDevices();
+        } catch (e) {}
+    }, 2000);
 }
 
 function updateConnectionBadge(connected) {
@@ -92,7 +104,7 @@ function updateConnectionBadge(connected) {
     }
 }
 
-// 2. Fetch Initial Node Info
+// 2. Fetch Initial Node Info & Status
 async function initStatus() {
     try {
         const res = await fetch("/api/status");
@@ -100,108 +112,134 @@ async function initStatus() {
         
         document.getElementById("localNodeName").innerText = data.node_name;
         document.getElementById("localNodeIp").innerText = `${data.local_ip}:${data.tcp_listen_port}`;
-        document.getElementById("peerHostInput").value = data.peer_host;
-        document.getElementById("peerPortInput").value = data.peer_port;
-        document.getElementById("peerBadge").innerText = `${data.peer_host}:${data.peer_port}`;
+        currentActivePeer.host = data.peer_host;
+        currentActivePeer.port = data.peer_port;
+        updateActivePeerDisplay(data.peer_host, data.peer_port, data.node_id);
+
+        if (data.operating_mode) {
+            setModeUI(data.operating_mode === "voice_mode" ? "voice" : "ptt");
+        }
     } catch (e) {
         console.error("Failed to fetch initial status:", e);
     }
 }
 
-// 3. Handle Server Events
-const seenMessageIds = new Set();
-function handleServerEvent(event) {
-    if (!event) return;
-    
-    if (event.type === "MESSAGE_RECEIVED" || event.type === "MESSAGE_SENT") {
-        const msgKey = `${event.timestamp}_${event.sender}_${event.text}`;
-        if (!seenMessageIds.has(msgKey)) {
-            seenMessageIds.add(msgKey);
-            appendMessageCard(event);
-            updateTelemetryStats(event);
-        }
-    } else if (event.type === "RECORDING_STATE") {
-        updateRecordingUI(event.recording, event.processing);
-    } else if (event.type === "STATUS_UPDATE") {
-        document.getElementById("peerBadge").innerText = `${event.peer_host}:${event.peer_port}`;
+function updateActivePeerDisplay(host, port, nodeId) {
+    const badge = document.getElementById("peerBadge");
+    const nameEl = document.getElementById("peerNodeName");
+    if (badge) badge.innerText = `${host}:${port}`;
+    if (nameEl) nameEl.innerText = nodeId ? `Target: ${nodeId}` : `Target: DIRECT IP`;
+}
+
+// 3. Priority Selector Management
+function initPrioritySelector() {
+    const priButtons = document.querySelectorAll(".btn-pri");
+    priButtons.forEach(btn => {
+        btn.addEventListener("click", () => {
+            priButtons.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            selectedPriority = parseInt(btn.getAttribute("data-pri") || "0");
+            selectedMessageType = parseInt(btn.getAttribute("data-type") || "1");
+            console.log(`[Priority Selected] Priority: ${selectedPriority}, Type: ${selectedMessageType}`);
+        });
+    });
+}
+
+// 4. Mode Switch: Mode A (Walkie-Talkie PTT) vs Mode B (Hands-Free Voice VAD)
+function initModeSwitch() {
+    const pttBtn = document.getElementById("modePttBtn");
+    const voiceBtn = document.getElementById("modeVoiceBtn");
+
+    if (pttBtn) {
+        pttBtn.addEventListener("click", () => switchOperatingMode("walkie_talkie"));
+    }
+    if (voiceBtn) {
+        voiceBtn.addEventListener("click", () => switchOperatingMode("voice_mode"));
     }
 }
 
-// 4. In-Browser 16kHz PCM WAV Encoder
-function encodePCM16WAV(samples, sampleRate) {
-    const buffer = new ArrayBuffer(44 + samples.length * 2);
-    const view = new DataView(buffer);
-
-    function writeString(view, offset, string) {
-        for (let i = 0; i < string.length; i++) {
-            view.setUint8(offset + i, string.charCodeAt(i));
-        }
+async function switchOperatingMode(mode) {
+    try {
+        const res = await fetch("/api/mode/switch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: mode })
+        });
+        const data = await res.json();
+        setModeUI(mode === "voice_mode" ? "voice" : "ptt");
+    } catch (e) {
+        console.error("Mode switch failed:", e);
     }
-
-    // RIFF chunk descriptor
-    writeString(view, 0, 'RIFF');
-    view.setUint32(4, 36 + samples.length * 2, true);
-    writeString(view, 8, 'WAVE');
-
-    // fmt sub-chunk
-    writeString(view, 12, 'fmt ');
-    view.setUint32(16, 16, true);          // SubChunk1Size (16 for PCM)
-    view.setUint16(20, 1, true);           // AudioFormat (1 = PCM)
-    view.setUint16(22, 1, true);           // NumChannels (1 mono)
-    view.setUint32(24, sampleRate, true);  // SampleRate
-    view.setUint32(28, sampleRate * 2, true); // ByteRate
-    view.setUint16(32, 2, true);           // BlockAlign
-    view.setUint16(34, 16, true);          // BitsPerSample (16-bit)
-
-    // data sub-chunk
-    writeString(view, 36, 'data');
-    view.setUint32(40, samples.length * 2, true);
-
-    // Write PCM 16-bit samples
-    let offset = 44;
-    for (let i = 0; i < samples.length; i++, offset += 2) {
-        let s = Math.max(-1, Math.min(1, samples[i]));
-        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
-    }
-
-    return new Blob([view], { type: 'audio/wav' });
 }
 
-// 5. Push-To-Talk Logic
+function setModeUI(mode) {
+    currentOperatingMode = (mode === "voice" || mode === "voice_mode") ? "voice_mode" : "walkie_talkie";
+    const pttBtn = document.getElementById("modePttBtn");
+    const voiceBtn = document.getElementById("modeVoiceBtn");
+    const mainPttButton = document.getElementById("pttButton");
+    const pttHint = document.getElementById("pttHint");
+    const vadIndicator = document.getElementById("vadStatusIndicator");
+
+    if (currentOperatingMode === "voice_mode") {
+        if (pttBtn) pttBtn.classList.remove("active");
+        if (voiceBtn) voiceBtn.classList.add("active");
+        if (mainPttButton) {
+            mainPttButton.classList.add("voice-mode");
+            document.getElementById("pttButtonLabel").innerText = "HANDS-FREE VAD ACTIVE";
+            document.getElementById("pttIcon").innerText = "⚡";
+        }
+        if (pttHint) pttHint.innerText = "SPEAK FREELY // AUTOMATIC SPEECH SEGMENTATION ACTIVE";
+        if (vadIndicator) vadIndicator.style.display = "flex";
+    } else {
+        if (voiceBtn) voiceBtn.classList.remove("active");
+        if (pttBtn) pttBtn.classList.add("active");
+        if (mainPttButton) {
+            mainPttButton.classList.remove("voice-mode", "speech-active");
+            document.getElementById("pttButtonLabel").innerText = "PUSH TO TALK";
+            document.getElementById("pttIcon").innerText = "🎙️";
+        }
+        if (pttHint) pttHint.innerText = "HOLD SPACEBAR OR CLICK TO TRANSMIT";
+        if (vadIndicator) vadIndicator.style.display = "none";
+    }
+}
+
+// 5. Push-To-Talk Control Handlers
 function initPTTControls() {
-    const pttBtn = document.getElementById("pttButton");
-    
-    // Mouse / Touch events for Click & Hold
-    pttBtn.addEventListener("mousedown", startPTT);
-    pttBtn.addEventListener("mouseup", stopPTT);
-    pttBtn.addEventListener("mouseleave", () => {
-        if (isRecording) stopPTT();
+    const btn = document.getElementById("pttButton");
+    if (!btn) return;
+
+    btn.addEventListener("mousedown", (e) => {
+        if (e.button === 0 && currentOperatingMode === "walkie_talkie") startPTT();
     });
 
-    pttBtn.addEventListener("touchstart", (e) => {
-        e.preventDefault();
-        startPTT();
+    btn.addEventListener("mouseup", (e) => {
+        if (e.button === 0 && currentOperatingMode === "walkie_talkie") stopPTT();
     });
-    pttBtn.addEventListener("touchend", (e) => {
+
+    btn.addEventListener("touchstart", (e) => {
         e.preventDefault();
-        stopPTT();
+        if (currentOperatingMode === "walkie_talkie") startPTT();
+    });
+
+    btn.addEventListener("touchend", (e) => {
+        e.preventDefault();
+        if (currentOperatingMode === "walkie_talkie") stopPTT();
     });
 }
 
 function initKeyboardShortcuts() {
-    // Spacebar Push-To-Talk
     window.addEventListener("keydown", (e) => {
-        if (e.code === "Space" && !isSpacePressed && e.target.tagName !== "INPUT") {
-            e.preventDefault();
+        if (e.code === "Space" && !isSpacePressed && e.target.tagName !== "INPUT" && currentOperatingMode === "walkie_talkie") {
             isSpacePressed = true;
+            e.preventDefault();
             startPTT();
         }
     });
 
     window.addEventListener("keyup", (e) => {
-        if (e.code === "Space" && isSpacePressed && e.target.tagName !== "INPUT") {
-            e.preventDefault();
+        if (e.code === "Space" && isSpacePressed && currentOperatingMode === "walkie_talkie") {
             isSpacePressed = false;
+            e.preventDefault();
             stopPTT();
         }
     });
@@ -216,12 +254,7 @@ async function startPTT() {
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
         try {
             micStream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    channelCount: 1,
-                    sampleRate: 16000,
-                    echoCancellation: true,
-                    noiseSuppression: true
-                }
+                audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true }
             });
 
             audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
@@ -232,7 +265,6 @@ async function startPTT() {
             source.connect(analyser);
             drawWaveform();
 
-            // Use ScriptProcessor to capture raw Float32 audio samples
             scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
             scriptProcessor.onaudioprocess = (e) => {
                 if (!isRecording) return;
@@ -258,7 +290,6 @@ async function stopPTT() {
     updateRecordingUI(false, true);
 
     if (scriptProcessor && micStream) {
-        // Stop browser recording
         try {
             scriptProcessor.disconnect();
             micStream.getTracks().forEach(track => track.stop());
@@ -272,7 +303,6 @@ async function stopPTT() {
         if (animFrameId) cancelAnimationFrame(animFrameId);
         initVisualizer();
 
-        // Concatenate all recorded Float32 samples
         let totalLen = recordedAudioBuffers.reduce((acc, curr) => acc + curr.length, 0);
         if (totalLen === 0) {
             updateRecordingUI(false, false);
@@ -286,13 +316,14 @@ async function stopPTT() {
             offset += chunk.length;
         }
 
-        // Encode as uncompressed 16kHz PCM WAV
         const wavBlob = encodePCM16WAV(flatAudio, 16000);
         const formData = new FormData();
         formData.append("file", wavBlob, "ptt_speech.wav");
         
         const lang = document.getElementById("languageSelect").value;
         formData.append("lang", lang);
+        formData.append("priority", selectedPriority);
+        formData.append("message_type", selectedMessageType);
 
         try {
             const res = await fetch("/api/send_audio_blob", {
@@ -307,44 +338,84 @@ async function stopPTT() {
             updateRecordingUI(false, false);
         }
     } else {
-        // Stop backend hardware mic
         const lang = document.getElementById("languageSelect").value;
-        const res = await fetch(`/api/ptt/backend_stop?lang=${lang}`, { method: "POST" });
-        const result = await res.json();
-        console.log("[Backend PTT Success]", result);
-        updateRecordingUI(false, false);
+        try {
+            await fetch(`/api/ptt/backend_stop?lang=${lang}&priority=${selectedPriority}&message_type=${selectedMessageType}`, {
+                method: "POST"
+            });
+        } catch (e) {
+            console.error("Failed to stop backend mic:", e);
+        } finally {
+            updateRecordingUI(false, false);
+        }
     }
 }
 
 function updateRecordingUI(recording, processing) {
-    const pttBtn = document.getElementById("pttButton");
-    const pttHint = document.getElementById("pttHint");
-    const pttIcon = document.getElementById("pttIcon");
+    const btn = document.getElementById("pttButton");
+    const label = document.getElementById("pttButtonLabel");
+    const icon = document.getElementById("pttIcon");
+    if (!btn) return;
 
     if (recording) {
-        pttBtn.classList.add("recording");
-        pttIcon.innerText = "🔴";
-        pttHint.innerText = "TRANSMITTING (SPEAK NOW)...";
+        btn.classList.add("recording");
+        if (label) label.innerText = "RECORDING AUDIO...";
+        if (icon) icon.innerText = "🔴";
     } else if (processing) {
-        pttBtn.classList.remove("recording");
-        pttIcon.innerText = "⚡";
-        pttHint.innerText = "LOCAL STT INFERENCE & TRANSMITTING...";
+        btn.classList.remove("recording");
+        if (label) label.innerText = "NEURAL INFERENCE...";
+        if (icon) icon.innerText = "⚡";
     } else {
-        pttBtn.classList.remove("recording");
-        pttIcon.innerText = "🎙️";
-        pttHint.innerText = "HOLD SPACEBAR OR CLICK TO TRANSMIT";
+        btn.classList.remove("recording");
+        if (label) label.innerText = currentOperatingMode === "voice_mode" ? "HANDS-FREE VAD ACTIVE" : "PUSH TO TALK";
+        if (icon) icon.innerText = currentOperatingMode === "voice_mode" ? "⚡" : "🎙️";
     }
 }
 
-// 6. Canvas Waveform Visualizer
+// 6. Encode Raw Float32 Array to 16kHz PCM WAV
+function encodePCM16WAV(samples, sampleRate) {
+    const buffer = new ArrayBuffer(44 + samples.length * 2);
+    const view = new DataView(buffer);
+
+    writeString(view, 0, 'RIFF');
+    view.setUint32(4, 36 + samples.length * 2, true);
+    writeString(view, 8, 'WAVE');
+    writeString(view, 12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); // PCM
+    view.setUint16(22, 1, true); // Mono
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeString(view, 36, 'data');
+    view.setUint32(40, samples.length * 2, true);
+
+    let offset = 44;
+    for (let i = 0; i < samples.length; i++, offset += 2) {
+        let s = Math.max(-1, Math.min(1, samples[i]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    }
+
+    return new Blob([view], { type: 'audio/wav' });
+}
+
+function writeString(view, offset, string) {
+    for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+    }
+}
+
+// 7. Live Waveform Canvas Visualizer
 function initVisualizer() {
     const canvas = document.getElementById("waveformCanvas");
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
-    
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = "#00f0ff";
-    ctx.lineWidth = 2;
+    ctx.fillStyle = "#0c121e";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = "rgba(0, 240, 255, 0.2)";
+    ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(0, canvas.height / 2);
     ctx.lineTo(canvas.width, canvas.height / 2);
@@ -359,21 +430,17 @@ function drawWaveform() {
     const dataArray = new Uint8Array(bufferLength);
 
     function render() {
-        if (!isRecording) {
-            initVisualizer();
-            return;
-        }
+        if (!isRecording) return;
         animFrameId = requestAnimationFrame(render);
         analyser.getByteTimeDomainData(dataArray);
 
-        ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
+        ctx.fillStyle = "#0c121e";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-
         ctx.lineWidth = 2;
-        ctx.strokeStyle = "#ff3366";
+        ctx.strokeStyle = "#00f0ff";
         ctx.beginPath();
 
-        const sliceWidth = canvas.width / bufferLength;
+        const sliceWidth = canvas.width * 1.0 / bufferLength;
         let x = 0;
 
         for (let i = 0; i < bufferLength; i++) {
@@ -389,20 +456,27 @@ function drawWaveform() {
     render();
 }
 
-// 7. Append Message Cards
+// 8. Append Message Cards with Priority Badges
 function appendMessageCard(msg) {
     const feed = document.getElementById("conversationFeed");
     const emptyNotice = document.getElementById("emptyFeedNotice");
     if (emptyNotice) emptyNotice.remove();
 
     const isOutgoing = msg.direction === "outgoing";
+    const priName = (msg.priority || "NORMAL").toUpperCase();
+    const typeName = (msg.message_type || "NORMAL").toUpperCase();
+    
+    const isDistress = msg.is_distress || priName === "DISTRESS" || typeName === "DISTRESS";
+    const isAlert = msg.is_alert || priName === "ALERT" || typeName === "ALERT";
+
     const card = document.createElement("div");
-    card.className = `msg-card ${isOutgoing ? "outgoing" : "incoming"}`;
+    card.className = `msg-card ${isOutgoing ? "outgoing" : "incoming"} ${isDistress ? "distress" : (isAlert ? "alert" : "")}`;
 
     card.innerHTML = `
         <div class="msg-meta">
             <div class="msg-sender">
-                ${isOutgoing ? "↗ OUTGOING [TRANSMIT]" : "↙ INCOMING [RECEIVED]"} · ${msg.sender}
+                ${isOutgoing ? "↗ OUTGOING [TRANSMIT]" : "↙ INCOMING [RECEIVED]"} · ${escapeHtml(msg.sender)}
+                <span class="msg-pri-badge ${priName}">${isDistress ? "🚨 DISTRESS" : (isAlert ? "⚠ ALERT" : (typeName === "VOICE_NOTE" ? "VOICE NOTE" : "NORMAL"))}</span>
             </div>
             <div>${msg.timestamp} (${msg.language ? msg.language.toUpperCase() : "EN"})</div>
         </div>
@@ -422,9 +496,41 @@ function appendMessageCard(msg) {
 
     feed.appendChild(card);
     feed.scrollTop = feed.scrollHeight;
+
+    // Trigger visual emergency banner if Distress or Alert
+    if (isDistress) {
+        showEmergencyBanner("DISTRESS SIGNAL ACTIVE", `Priority Playback Lock Active: "${msg.text}"`, false);
+    } else if (isAlert) {
+        showEmergencyBanner("ALERT MESSAGE", `Priority Notice from ${msg.sender}: "${msg.text}"`, true);
+    }
 }
 
-// 8. Update Telemetry Dashboard Gauges
+function showEmergencyBanner(title, body, isAlertOnly) {
+    const banner = document.getElementById("emergencyBanner");
+    const titleEl = document.getElementById("emergencyTitle");
+    const bodyEl = document.getElementById("emergencyBody");
+    const iconEl = document.getElementById("emergencyIcon");
+
+    if (banner) {
+        banner.style.display = "flex";
+        if (isAlertOnly) {
+            banner.className = "emergency-banner alert-mode";
+            if (iconEl) iconEl.innerText = "⚠";
+        } else {
+            banner.className = "emergency-banner";
+            if (iconEl) iconEl.innerText = "🚨";
+        }
+        if (titleEl) titleEl.innerText = title;
+        if (bodyEl) bodyEl.innerText = body;
+
+        // Auto-clear banner after 8 seconds
+        setTimeout(() => {
+            banner.style.display = "none";
+        }, 8000);
+    }
+}
+
+// 9. Update Telemetry Dashboard Gauges
 function updateTelemetryStats(msg) {
     totalMessages++;
     if (msg.audio_bytes) totalAudioBytes += msg.audio_bytes;
@@ -447,7 +553,7 @@ function updateTelemetryStats(msg) {
     }
 }
 
-// 9. Replay Audio Locally
+// 10. Replay Audio Locally
 async function replayTTS(text) {
     const lang = document.getElementById("languageSelect").value;
     await fetch("/api/replay_tts", {
@@ -457,7 +563,7 @@ async function replayTTS(text) {
     });
 }
 
-// 10. Quick Demo Fallback Samples
+// 11. Quick Demo Fallback Samples
 function initSampleButtons() {
     const buttons = document.querySelectorAll(".btn-sample");
     buttons.forEach((btn) => {
@@ -470,7 +576,12 @@ function initSampleButtons() {
                 await fetch("/api/send_sample", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ sample: sampleKey, language: lang })
+                    body: JSON.stringify({
+                        sample: sampleKey,
+                        language: lang,
+                        priority: selectedPriority,
+                        message_type: selectedMessageType
+                    })
                 });
             } catch (e) {
                 console.error("Failed to send sample:", e);
@@ -482,9 +593,10 @@ function initSampleButtons() {
     });
 }
 
-// 11. Peer Connect Form
+// 12. Peer Connect Form
 function initConnectForm() {
     const btn = document.getElementById("updatePeerBtn");
+    if (!btn) return;
     btn.addEventListener("click", async () => {
         const host = document.getElementById("peerHostInput").value.trim();
         const port = document.getElementById("peerPortInput").value.trim();
@@ -492,20 +604,138 @@ function initConnectForm() {
 
         btn.innerText = "CONNECTING...";
         try {
-            await fetch("/api/connect", {
+            const res = await fetch("/api/connect_device", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ peer_host: host, peer_port: parseInt(port) })
+                body: JSON.stringify({ ip: host, port: parseInt(port) })
             });
+            const data = await res.json();
+            updateActivePeerDisplay(host, port, data.node_id);
             btn.innerText = "CONNECTED";
-            setTimeout(() => { btn.innerText = "UPDATE PEER"; }, 1500);
+            setTimeout(() => { btn.innerText = "CONNECT TO IP"; }, 1500);
         } catch (e) {
             btn.innerText = "ERROR";
         }
     });
 }
 
+// 13. Automatic Device Discovery Management
+function initDiscovery() {
+    const refreshBtn = document.getElementById("refreshDevicesBtn");
+    if (refreshBtn) {
+        refreshBtn.addEventListener("click", async () => {
+            refreshBtn.classList.add("rotating");
+            await fetchDiscoveredDevices();
+            setTimeout(() => { refreshBtn.classList.remove("rotating"); }, 500);
+        });
+    }
+    fetchDiscoveredDevices();
+}
+
+async function fetchDiscoveredDevices() {
+    try {
+        const res = await fetch("/api/devices");
+        if (res.ok) {
+            const devices = await res.json();
+            knownDevices = devices || [];
+            renderDiscoveredDevices(knownDevices);
+        }
+    } catch (e) {
+        console.warn("Failed to fetch discovered devices:", e);
+    }
+}
+
+function renderDiscoveredDevices(devices) {
+    const container = document.getElementById("discoveredDevicesList");
+    if (!container) return;
+
+    if (!devices || devices.length === 0) {
+        container.innerHTML = `
+            <div class="scanning-notice">
+              <span class="radar-sweep">📡</span>
+              <span>Scanning for nearby iTantra nodes (_itantra._tcp)...</span>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = "";
+
+    devices.forEach((dev) => {
+        const isActive = (dev.ip === currentActivePeer.host && dev.port === currentActivePeer.port) ||
+                         (currentActivePeer.node_id && dev.node_id === currentActivePeer.node_id);
+        const isOnline = dev.online !== false;
+
+        const card = document.createElement("div");
+        card.className = `device-card ${isActive ? "active-device" : ""} ${isOnline ? "" : "offline-device"}`;
+
+        const langBadges = (dev.languages || ["en"])
+            .map(l => `<span class="tag-badge lang">${escapeHtml(l.toUpperCase())}</span>`).join(" ");
+
+        const capBadges = (dev.capabilities || ["stt", "tts"])
+            .map(c => `<span class="tag-badge cap">${escapeHtml(c.toUpperCase())}</span>`).join(" ");
+
+        card.innerHTML = `
+            <div class="device-card-header">
+                <div class="device-name-group">
+                    <span class="status-dot ${isOnline ? "online" : "offline"}" title="${isOnline ? "ONLINE" : "OFFLINE"}"></span>
+                    <span class="device-title">${escapeHtml(dev.device_name || dev.node_id)}</span>
+                </div>
+                <span class="device-ip">${escapeHtml(dev.ip)}:${dev.port}</span>
+            </div>
+            
+            <div class="device-tags">
+                ${langBadges}
+                ${capBadges}
+                <span class="tag-badge" style="font-size: 0.6rem;">${escapeHtml(dev.device_type || "node")}</span>
+            </div>
+
+            <button class="btn-device-connect ${isActive ? "active" : ""}" 
+                    ${!isOnline || isActive ? "disabled" : ""} 
+                    onclick="connectToDiscoveredDevice('${escapeHtml(dev.node_id)}', '${escapeHtml(dev.ip)}', ${dev.port})">
+                ${isActive ? "✓ ACTIVE PEER LINK" : (isOnline ? "⚡ CONNECT" : "🔴 OFFLINE")}
+            </button>
+        `;
+
+        container.appendChild(card);
+    });
+}
+
+async function connectToDiscoveredDevice(nodeId, ip, port) {
+    try {
+        const res = await fetch("/api/connect_device", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ node_id: nodeId, ip: ip, port: port })
+        });
+        const data = await res.json();
+        updateActivePeerDisplay(ip, port, nodeId);
+    } catch (e) {
+        console.error("Failed to connect to discovered device:", e);
+    }
+}
+
+// 14. Server Event Dispatcher
+function handleServerEvent(data) {
+    if (data.type === "MESSAGE_RECEIVED" || data.type === "MESSAGE_SENT") {
+        appendMessageCard(data);
+        updateTelemetryStats(data);
+    } else if (data.type === "PLAYBACK_EVENT") {
+        if (data.data && data.data.event === "playback_finished") {
+            const banner = document.getElementById("emergencyBanner");
+            if (banner) banner.style.display = "none";
+        }
+    } else if (data.type === "RECORDING_STATE") {
+        updateRecordingUI(data.recording, data.processing);
+    } else if (data.type === "MODE_SWITCH") {
+        setModeUI(data.operating_mode === "voice_mode" ? "voice" : "ptt");
+    } else if (data.type === "DEVICE_DISCOVERY_UPDATE") {
+        knownDevices = data.devices || [];
+        renderDiscoveredDevices(knownDevices);
+    }
+}
+
 function escapeHtml(text) {
     if (!text) return "";
-    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+    return text.toString().replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 }

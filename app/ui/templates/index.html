@@ -31,8 +31,16 @@
       <div class="badge badge-zero-audio">
         <span>🔇</span> AUDIO TRANSMITTED: NO (DATA ONLY)
       </div>
-    </div>
   </header>
+ 
+  <!-- Prominent Emergency Alert / Distress Banner -->
+  <div class="emergency-banner" id="emergencyBanner" style="display: none;">
+    <div class="emergency-icon" id="emergencyIcon">🚨</div>
+    <div class="emergency-content">
+      <div class="emergency-title" id="emergencyTitle">DISTRESS SIGNAL ACTIVE</div>
+      <div class="emergency-body" id="emergencyBody">Priority Lock Active. Emergency audio playback in progress.</div>
+    </div>
+  </div>
 
   <!-- Main 3-Column Layout -->
   <main>
@@ -54,16 +62,44 @@
         </div>
 
         <div class="control-group">
-          <label class="control-label">Target Peer Endpoint</label>
-          <div class="input-row">
-            <input type="text" id="peerHostInput" placeholder="Peer IP (e.g. 192.168.1.45)">
-            <input type="number" id="peerPortInput" placeholder="Port" style="width: 90px;" value="65432">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <label class="control-label" style="margin-bottom: 0;">// ACTIVE PEER TARGET</label>
+            <span id="activePeerStatusDot" style="color: var(--accent-emerald); font-size: 0.75rem;">● LINK READY</span>
           </div>
-          <button class="btn" id="updatePeerBtn" style="margin-top: 4px;">UPDATE PEER</button>
-          <div style="font-size: 0.72rem; font-family: var(--font-mono); color: var(--text-muted); margin-top: 2px;">
-            Current Peer: <span id="peerBadge" style="color: var(--accent-cyan);">127.0.0.1:65432</span>
+          <div class="stat-card" style="padding: 10px;">
+            <div style="font-family: var(--font-mono); font-size: 0.85rem; color: var(--accent-emerald); font-weight: 700;" id="peerBadge">127.0.0.1:65432</div>
+            <div style="font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-muted);" id="peerNodeName">Target: LOCAL DEFAULT</div>
           </div>
         </div>
+
+        <div class="control-group">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <label class="control-label" style="margin-bottom: 0;">// AVAILABLE DEVICES (mDNS)</label>
+            <button id="refreshDevicesBtn" class="btn-icon" title="Scan / Refresh Network">🔄</button>
+          </div>
+          
+          <div id="discoveredDevicesList" class="devices-list">
+            <!-- Dynamically populated -->
+            <div class="scanning-notice">
+              <span class="radar-sweep">📡</span>
+              <span>Scanning local network for iTantra nodes...</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Collapsible Fallback Manual Override -->
+        <details class="manual-override-details">
+          <summary style="font-size: 0.72rem; font-family: var(--font-mono); color: var(--text-muted); cursor: pointer; padding: 4px 0;">
+            ⚙️ Manual IP Override (Fallback)
+          </summary>
+          <div style="padding-top: 6px;">
+            <div class="input-row">
+              <input type="text" id="peerHostInput" placeholder="IP Address (e.g. 192.168.1.15)">
+              <input type="number" id="peerPortInput" placeholder="Port" style="width: 80px;" value="65432">
+            </div>
+            <button class="btn" id="updatePeerBtn" style="margin-top: 4px; font-size: 0.75rem;">CONNECT TO IP</button>
+          </div>
+        </details>
 
         <div class="control-group">
           <label class="control-label">Target Language</label>
@@ -109,24 +145,52 @@
         </div>
       </div>
 
-      <!-- Push-To-Talk Center Console -->
+      <!-- Push-To-Talk & Voice Activity Detection Console -->
       <div class="ptt-console">
         
+        <!-- Operating Mode Toggle -->
+        <div class="mode-switch-container">
+          <div class="mode-switch-title">// TRANSMISSION MODE</div>
+          <div class="mode-toggle-group">
+            <button class="btn-mode active" id="modePttBtn">
+              <span>🎙️</span> PTT MANUAL
+            </button>
+            <button class="btn-mode" id="modeVoiceBtn">
+              <span>⚡</span> VOICE HANDS-FREE (VAD)
+            </button>
+          </div>
+        </div>
+
+        <!-- Priority Selector -->
+        <div class="priority-selector-group">
+          <span style="font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-muted);">// PRIORITY:</span>
+          <button class="btn-pri active" id="priNormalBtn" data-pri="0" data-type="1">NORMAL</button>
+          <button class="btn-pri" id="priVoiceNoteBtn" data-pri="1" data-type="2">VOICE NOTE</button>
+          <button class="btn-pri alert" id="priAlertBtn" data-pri="2" data-type="3">⚠ ALERT</button>
+          <button class="btn-pri distress" id="priDistressBtn" data-pri="3" data-type="4">🚨 DISTRESS</button>
+        </div>
+
         <!-- Live Waveform Visualizer -->
         <div class="visualizer-container">
           <canvas id="waveformCanvas" width="800" height="48"></canvas>
         </div>
 
-        <!-- Big PTT Button -->
+        <!-- Center Action Console (PTT / VAD) -->
         <div class="ptt-button-wrapper">
           <button class="ptt-button" id="pttButton" title="Press & Hold Spacebar or Click to Speak">
             <span class="ptt-icon" id="pttIcon">🎙️</span>
-            <span>PUSH TO TALK</span>
+            <span id="pttButtonLabel">PUSH TO TALK</span>
           </button>
         </div>
 
         <div class="ptt-hint" id="pttHint">
           HOLD SPACEBAR OR CLICK TO TRANSMIT
+        </div>
+
+        <!-- VAD Active Status Badge -->
+        <div id="vadStatusIndicator" class="vad-indicator" style="display: none;">
+          <span class="pulse-dot-vad"></span>
+          <span id="vadStatusText">VAD STREAMING: LISTENING FOR SPEECH (SILENCE TIMEOUT: 700ms)</span>
         </div>
 
       </div>

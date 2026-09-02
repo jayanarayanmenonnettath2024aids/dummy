@@ -1,34 +1,43 @@
 import os
+import re
 import time
 import numpy as np
 from abc import ABC, abstractmethod
-from typing import Optional, Union, Tuple
+from typing import Optional, Union, Tuple, Dict, Any, List
 import sounddevice as sd
 import soundfile as sf
 from scipy.signal import resample
 
-class BaseSTTEngine(ABC):
-    """Abstract Base Class for Speech-To-Text engines."""
-    
+class STTEngine(ABC):
+    """
+    Abstract Base Class for local Speech-To-Text engines in iTantra.
+    Ensures pluggable offline models suitable for desktop and Android edge nodes.
+    """
     @abstractmethod
     def transcribe(self, audio: Union[np.ndarray, str], sample_rate: int = 16000, language: str = "en") -> Tuple[str, float]:
         """
         Transcribe audio input into text.
-        
-        Args:
-            audio: Numpy array of audio samples or path to a WAV file.
-            sample_rate: Sample rate of the audio array (default 16000).
-            language: Target language code ('en', 'ta', etc.)
-            
-        Returns:
-            Tuple of (transcript: str, latency_seconds: float)
+        Returns: Tuple of (transcript: str, latency_seconds: float)
         """
         pass
 
+    @abstractmethod
+    def is_language_supported(self, language: str) -> bool:
+        """Check if language is supported by this engine."""
+        pass
 
-class WhisperSTTEngine(BaseSTTEngine):
+    @abstractmethod
+    def get_engine_info(self) -> Dict[str, Any]:
+        """Return engine metadata (name, model, backend, size, supported languages)."""
+        pass
+
+# Backward compatibility alias
+BaseSTTEngine = STTEngine
+
+
+class WhisperSTT(STTEngine):
     """
-    Local STT engine using OpenAI Whisper (tiny model for CPU efficiency).
+    Local Whisper STT Engine using OpenAI Whisper (tiny model for CPU efficiency).
     Operates 100% offline without any cloud APIs.
     """
     def __init__(self, model_name: str = "openai/whisper-tiny", device: str = "cpu"):
@@ -38,56 +47,20 @@ class WhisperSTTEngine(BaseSTTEngine):
         self._recording_stream = None
         self._recorded_frames = []
         self._is_recording = False
+        self._supported_languages = ["en", "ta", "hi", "gu", "mr", "kn", "ml", "te", "or", "bn"]
         self._initialize_model()
 
-    def start_dynamic_recording(self, sample_rate: int = 16000):
-        """Start dynamic audio stream recording for Push-To-Talk."""
-        if self._is_recording:
-            return
-        self._recorded_frames = []
-        self._is_recording = True
-        
-        def callback(indata, frames, time_info, status):
-            if self._is_recording:
-                self._recorded_frames.append(indata.copy())
+    def is_language_supported(self, language: str) -> bool:
+        return language.lower()[:2] in self._supported_languages
 
-        self._recording_stream = sd.InputStream(
-            samplerate=sample_rate,
-            channels=1,
-            dtype='float32',
-            callback=callback
-        )
-        self._recording_stream.start()
-
-    def stop_dynamic_recording(self) -> np.ndarray:
-        """Stop dynamic audio recording and return captured audio array."""
-        if not self._is_recording:
-            return np.array([], dtype=np.float32)
-        
-        self._is_recording = False
-        if self._recording_stream:
-            self._recording_stream.stop()
-            self._recording_stream.close()
-            self._recording_stream = None
-
-        if not self._recorded_frames:
-            return np.array([], dtype=np.float32)
-        
-        audio = np.concatenate(self._recorded_frames, axis=0).squeeze()
-        return audio
-
-    def record_microphone(self, duration_seconds: float = 4.0, sample_rate: int = 16000) -> np.ndarray:
-        """Record audio from the default input device for a fixed duration."""
-        print(f"[*] Recording for {duration_seconds}s (Speak now)...")
-        recording = sd.rec(
-            int(duration_seconds * sample_rate),
-            samplerate=sample_rate,
-            channels=1,
-            dtype='float32'
-        )
-        sd.wait()
-        print("[*] Recording complete.")
-        return recording.squeeze()
+    def get_engine_info(self) -> Dict[str, Any]:
+        return {
+            "engine": "WhisperSTT",
+            "model": self.model_name,
+            "backend": "transformers / PyTorch CPU",
+            "offline_only": True,
+            "supported_languages": self._supported_languages
+        }
 
     def _initialize_model(self):
         import warnings
@@ -98,14 +71,12 @@ class WhisperSTTEngine(BaseSTTEngine):
         from transformers import pipeline, logging
         logging.set_verbosity_error()
         try:
-            # Load from offline cache
             self._pipeline = pipeline(
                 "automatic-speech-recognition",
                 model=self.model_name,
                 device=self.device,
             )
         except Exception:
-            # If not in cache, temporarily enable online fetch
             os.environ.pop("HF_HUB_OFFLINE", None)
             os.environ.pop("TRANSFORMERS_OFFLINE", None)
             self._pipeline = pipeline(
@@ -115,12 +86,9 @@ class WhisperSTTEngine(BaseSTTEngine):
             )
 
     def preprocess_audio(self, audio: np.ndarray, orig_sr: int, target_sr: int = 16000) -> np.ndarray:
-        """Convert multi-channel audio to mono and resample to target_sr."""
-        # Convert stereo to mono
         if audio.ndim > 1:
             audio = np.mean(audio, axis=1)
         
-        # Ensure float32 in [-1.0, 1.0]
         if audio.dtype != np.float32:
             if np.issubdtype(audio.dtype, np.integer):
                 max_val = np.iinfo(audio.dtype).max
@@ -128,46 +96,25 @@ class WhisperSTTEngine(BaseSTTEngine):
             else:
                 audio = audio.astype(np.float32)
 
-        # Resample if needed
         if orig_sr != target_sr:
             num_samples = int(len(audio) * target_sr / orig_sr)
             audio = resample(audio, num_samples).astype(np.float32)
             
         return audio
 
-    def record_microphone(self, duration_seconds: float = 4.0, sample_rate: int = 16000) -> np.ndarray:
-        """Record audio from the default input device."""
-        print(f"[*] Recording for {duration_seconds}s (Speak now)...")
-        recording = sd.rec(
-            int(duration_seconds * sample_rate),
-            samplerate=sample_rate,
-            channels=1,
-            dtype='float32'
-        )
-        sd.wait()
-        print("[*] Recording complete.")
-        return recording.squeeze()
-
     def load_wav(self, file_path: str) -> Tuple[np.ndarray, int]:
-        """Load audio from a WAV file."""
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Audio sample file not found: {file_path}")
         data, sr = sf.read(file_path)
         return data, sr
 
     def _clean_hallucinations(self, text: str) -> str:
-        """Filter out repetitive phrase loops and common Whisper silence hallucinations."""
-        import re
         if not text:
             return ""
         
-        # Collapse phrases repeating 3 or more times (e.g. "let's go, let's go, let's go" -> "let's go")
         cleaned = re.sub(r'(\b.+?\b)(?:[,\s]+\1){2,}', r'\1', text, flags=re.IGNORECASE)
-        
-        # Also clean repeating single words
         cleaned = re.sub(r'\b(\w+)(?:\s+\1){2,}\b', r'\1', cleaned, flags=re.IGNORECASE)
 
-        # Filter out common Whisper hallucinations that occur on ambient silence
         silence_hallucinations = [
             "thank you.", "thank you", "thank you for watching", 
             "thank you for watching.", "subtitles by", "bye bye", "amara.org"
@@ -178,23 +125,17 @@ class WhisperSTTEngine(BaseSTTEngine):
         return cleaned.strip()
 
     def transcribe(self, audio: Union[np.ndarray, str], sample_rate: int = 16000, language: str = "en") -> Tuple[str, float]:
-        """
-        Perform local STT inference on audio array or WAV file with hallucination prevention.
-        """
-        # Handle file input vs array input
         if isinstance(audio, str):
             audio_data, sr = self.load_wav(audio)
             audio_processed = self.preprocess_audio(audio_data, sr, target_sr=16000)
         else:
             audio_processed = self.preprocess_audio(audio, sample_rate, target_sr=16000)
 
-        # Silence / Energy gate: discard pure silence/ambient hiss (< -45 dB)
         rms = np.sqrt(np.mean(audio_processed**2)) if len(audio_processed) > 0 else 0.0
-        if rms < 0.003 or len(audio_processed) < 1600:  # less than 0.1s or pure silence
+        if rms < 0.003 or len(audio_processed) < 1600:
             return "", 0.001
 
-        # Build generate_kwargs with anti-repetition penalty
-        lang_code = "english" if language.lower() in ["en", "english"] else ("tamil" if language.lower() in ["ta", "tamil"] else language)
+        lang_code = "english" if language.lower() in ["en", "english"] else ("tamil" if language.lower() in ["ta", "tamil"] else ("hindi" if language.lower() in ["hi", "hindi"] else language))
         generate_kwargs = {
             "language": lang_code,
             "task": "transcribe",
@@ -213,3 +154,101 @@ class WhisperSTTEngine(BaseSTTEngine):
         raw_transcript = result.get("text", "").strip()
         cleaned_transcript = self._clean_hallucinations(raw_transcript)
         return cleaned_transcript, latency
+
+    def start_dynamic_recording(self, sample_rate: int = 16000):
+        if self._is_recording:
+            return
+        self._recorded_frames = []
+        self._is_recording = True
+        
+        def callback(indata, frames, time_info, status):
+            if self._is_recording:
+                self._recorded_frames.append(indata.copy())
+
+        self._recording_stream = sd.InputStream(
+            samplerate=sample_rate,
+            channels=1,
+            dtype='float32',
+            callback=callback
+        )
+        self._recording_stream.start()
+
+    def stop_dynamic_recording(self) -> np.ndarray:
+        if not self._is_recording:
+            return np.array([], dtype=np.float32)
+        
+        self._is_recording = False
+        if self._recording_stream:
+            self._recording_stream.stop()
+            self._recording_stream.close()
+            self._recording_stream = None
+
+        if not self._recorded_frames:
+            return np.array([], dtype=np.float32)
+        
+        audio = np.concatenate(self._recorded_frames, axis=0).squeeze()
+        return audio
+
+# Backward compatibility class
+class WhisperSTTEngine(WhisperSTT):
+    pass
+
+
+class OnnxSTT(STTEngine):
+    """
+    High-Performance Portable ONNX STT Engine (Sherpa-ONNX / ONNX Runtime).
+    Designed for zero-dependency native edge and Android deployment.
+    """
+    def __init__(self, model_dir: Optional[str] = None, fallback_engine: Optional[STTEngine] = None):
+        self.model_dir = model_dir
+        self.fallback = fallback_engine or WhisperSTT()
+        self._recognizer = None
+        self._initialize_onnx()
+
+    def _initialize_onnx(self):
+        try:
+            import sherpa_onnx
+            if self.model_dir and os.path.exists(self.model_dir):
+                # Initialize local sherpa-onnx offline recognizer
+                tokens_path = os.path.join(self.model_dir, "tokens.txt")
+                encoder_path = os.path.join(self.model_dir, "encoder.onnx")
+                decoder_path = os.path.join(self.model_dir, "decoder.onnx")
+                joiner_path = os.path.join(self.model_dir, "joiner.onnx")
+
+                if os.path.exists(encoder_path) and os.path.exists(tokens_path):
+                    self._recognizer = sherpa_onnx.OfflineRecognizer.from_transducer(
+                        encoder=encoder_path,
+                        decoder=decoder_path,
+                        joiner=joiner_path,
+                        tokens=tokens_path,
+                        num_threads=1
+                    )
+        except Exception as e:
+            print(f"[!] OnnxSTT init notice: {e}. Utilizing verified WhisperSTT fallback.")
+
+    def is_language_supported(self, language: str) -> bool:
+        return self.fallback.is_language_supported(language)
+
+    def get_engine_info(self) -> Dict[str, Any]:
+        return {
+            "engine": "OnnxSTT",
+            "sherpa_active": self._recognizer is not None,
+            "fallback": "WhisperSTT",
+            "offline_only": True
+        }
+
+    def transcribe(self, audio: Union[np.ndarray, str], sample_rate: int = 16000, language: str = "en") -> Tuple[str, float]:
+        if self._recognizer is not None:
+            # Process via native Sherpa-ONNX
+            start = time.perf_counter()
+            if isinstance(audio, str):
+                data, sr = sf.read(audio)
+            else:
+                data, sr = audio, sample_rate
+            stream = self._recognizer.create_stream()
+            stream.accept_waveform(sr, data)
+            self._recognizer.decode_stream(stream)
+            latency = time.perf_counter() - start
+            return stream.result.text.strip(), latency
+
+        return self.fallback.transcribe(audio, sample_rate=sample_rate, language=language)

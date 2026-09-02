@@ -71,14 +71,22 @@ class iTantraPacket:
             auth_tag=data.get("sec_tag", "")
         )
 
-    def to_bytes(self) -> bytes:
-        """Serialize packet to UTF-8 JSON bytes."""
+    def to_bytes(self, format_type: str = "json") -> bytes:
+        """Serialize packet to bytes (supports 'json' or 'binary')."""
+        if format_type == "binary":
+            from app.communication.packet_v2 import iTantraPacketV2
+            v2 = iTantraPacketV2.from_dict(self.to_dict())
+            return v2.to_binary()
         json_str = json.dumps(self.to_dict(), ensure_ascii=False)
         return json_str.encode('utf-8')
 
     @classmethod
     def from_bytes(cls, raw_bytes: bytes) -> "iTantraPacket":
-        """Deserialize UTF-8 JSON bytes to packet."""
+        """Deserialize UTF-8 JSON bytes or binary V2 bytes to packet."""
+        from app.communication.packet_v2 import MAGIC_HEADER, iTantraPacketV2
+        if raw_bytes.startswith(MAGIC_HEADER):
+            v2 = iTantraPacketV2.from_binary(raw_bytes)
+            return cls.from_dict(v2.to_dict())
         json_str = raw_bytes.decode('utf-8')
         data = json.loads(json_str)
         return cls.from_dict(data)
@@ -87,9 +95,9 @@ class iTantraPacket:
         """Returns byte size of the raw text message."""
         return len(self.payload.encode('utf-8'))
 
-    def get_total_packet_bytes(self) -> int:
+    def get_total_packet_bytes(self, format_type: str = "json") -> int:
         """Returns total network frame byte size including metadata headers."""
-        return len(self.to_bytes())
+        return len(self.to_bytes(format_type))
 
 
 class CommunicationInterface(ABC):

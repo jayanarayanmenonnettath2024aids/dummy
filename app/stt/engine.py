@@ -97,8 +97,17 @@ class WhisperSTT(STTEngine):
                 audio = audio.astype(np.float32)
 
         if orig_sr != target_sr:
-            num_samples = int(len(audio) * target_sr / orig_sr)
-            audio = resample(audio, num_samples).astype(np.float32)
+            try:
+                import torch
+                import torchaudio.transforms as T
+                resampler = T.Resample(orig_freq=orig_sr, new_freq=target_sr)
+                tensor_audio = torch.from_numpy(audio.copy()).float()
+                audio = resampler(tensor_audio).numpy().astype(np.float32)
+            except Exception:
+                from scipy.signal import resample_poly
+                import math
+                gcd = math.gcd(orig_sr, target_sr)
+                audio = resample_poly(audio, target_sr // gcd, orig_sr // gcd).astype(np.float32)
             
         return audio
 
@@ -142,6 +151,10 @@ class WhisperSTT(STTEngine):
         if max_peak > 0.005:
             audio_processed = (audio_processed / max_peak * 0.95).astype(np.float32)
 
+        # Pad 100ms silence on ends to ensure Whisper receptive field processes first/last phonemes
+        pad_samples = int(16000 * 0.1)
+        audio_processed = np.pad(audio_processed, (pad_samples, pad_samples), mode='constant')
+
         lang_key = language.lower()[:2] if language else "en"
         whisper_lang_map = {
             "en": "english",
@@ -167,8 +180,6 @@ class WhisperSTT(STTEngine):
 
         generate_kwargs = {
             "task": "transcribe",
-            "no_repeat_ngram_size": 3,
-            "repetition_penalty": 1.3,
             "max_new_tokens": 64,
             "num_beams": 1,
             "do_sample": False

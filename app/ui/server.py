@@ -20,7 +20,7 @@ from app.discovery.models import DiscoveredDevice
 from app.vad.config import VADConfig
 from app.vad.stream_processor import VADStreamProcessor
 from app.stt.engine import WhisperSTT
-from app.tts.engine import NeuralONNXTTSEngine, BaseTTSEngine
+from app.tts.engine import NeuralONNXTTSEngine, BaseTTSEngine, UnifiedTTSEngine
 from app.metrics.metrics import PipelineMetrics
 
 
@@ -48,7 +48,7 @@ def create_app(
     tcp_listen_port: int = 65432,
     peer_host: str = "127.0.0.1",
     peer_port: int = 65432,
-    node_name: str = "NODE-ALPHA",
+    node_name: Optional[str] = "NODE-ALPHA",
     language: str = "en",
     auto_start_vad: bool = False
 ) -> FastAPI:
@@ -57,7 +57,7 @@ def create_app(
     ws_manager = ConnectionManager()
     _event_history: List[Dict[str, Any]] = []
     _current_lang = language
-    _node_name = node_name
+    _node_name = node_name or socket.gethostname() or "NODE-ALPHA"
 
     # Operating Mode State: "walkie_talkie" (PTT) vs "voice_mode" (Hands-Free VAD)
     _operating_mode = "voice_mode" if auto_start_vad else "walkie_talkie"
@@ -69,7 +69,7 @@ def create_app(
 
     # STT & Neural ONNX TTS Singletons
     _stt_engine: Optional[WhisperSTT] = None
-    _tts_engine: BaseTTSEngine = NeuralONNXTTSEngine()
+    _tts_engine: BaseTTSEngine = UnifiedTTSEngine()
 
     def get_stt() -> WhisperSTT:
         nonlocal _stt_engine
@@ -179,7 +179,7 @@ def create_app(
         device_name=_node_name,
         tcp_port=tcp_listen_port,
         device_type="desktop",
-        languages=[language, "hi" if language != "hi" else "en"],
+        languages=["en", "hi", "te", "ml", "ta", "kn", "mr", "bn", "gu"],
         capabilities=["stt", "tts", "ptt", "vad", "priority"],
         protocol_version="2.0",
         stale_timeout=15.0

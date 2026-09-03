@@ -31,8 +31,8 @@ class MdnsDeviceDiscovery(DeviceDiscovery):
     """
     def __init__(
         self,
-        node_id: str,
-        device_name: str,
+        node_id: Optional[str] = None,
+        device_name: Optional[str] = None,
         tcp_port: int = 65432,
         local_ip: Optional[str] = None,
         device_type: str = "desktop",
@@ -42,8 +42,8 @@ class MdnsDeviceDiscovery(DeviceDiscovery):
         stale_timeout: float = 15.0,
         zeroconf_instance: Optional[Zeroconf] = None
     ):
-        self.node_id = node_id
-        self.device_name = device_name
+        self.node_id = node_id or socket.gethostname() or "NODE-ALPHA"
+        self.device_name = device_name or self.node_id
         self.tcp_port = tcp_port
         self.local_ip = local_ip or self._detect_local_ip()
         self.device_type = device_type
@@ -82,7 +82,9 @@ class MdnsDeviceDiscovery(DeviceDiscovery):
 
     def _create_service_info(self) -> ServiceInfo:
         """Create Zeroconf ServiceInfo for local node advertisement."""
-        sanitized_node_id = self.node_id.replace(" ", "-")
+        node_str = str(self.node_id or socket.gethostname() or "NODE-ALPHA")
+        self.node_id = node_str
+        sanitized_node_id = node_str.replace(" ", "-")
         service_name = f"{sanitized_node_id}.{SERVICE_TYPE}"
         server_host = f"{sanitized_node_id}.local."
 

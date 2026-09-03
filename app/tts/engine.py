@@ -220,7 +220,40 @@ class NeuralONNXTTSEngine(TTSEngine):
         return output_path, t_latency
 
 
-class LocalTTSEngine(NeuralONNXTTSEngine):
+class UnifiedTTSEngine(TTSEngine):
+    """
+    Unified Multi-Backend Neural TTS Engine for iTantra.
+    Seamlessly routes speech synthesis across Piper INT8 (en, hi, te, ml)
+    and AI4Bharat VITS-RASA FP32 (ta, kn, mr, bn) via ModelManager.
+    """
+    def __init__(self, precision: str = "int8"):
+        from app.models.manager import ModelManager
+        self.mm = ModelManager(precision=precision)
+
+    def synthesize(
+        self,
+        text: str,
+        language: str = "en",
+        output_path: Optional[str] = None,
+        play_audio: bool = True
+    ) -> Tuple[str, float]:
+        lang = language.lower()[:2] if language else "en"
+        engine = self.mm.load_model(lang, task="tts")
+        return engine.synthesize(text=text, language=lang, output_path=output_path, play_audio=play_audio)
+
+    def is_language_supported(self, language: str) -> bool:
+        lang = language.lower()[:2] if language else "en"
+        return self.mm.is_available(lang, task="tts")
+
+    def get_engine_info(self) -> Dict[str, Any]:
+        return {
+            "engine": "UnifiedTTSEngine",
+            "offline_only": True,
+            "supported_languages": [p.code for p in self.mm.get_installed_models() if p.tts_available]
+        }
+
+
+class LocalTTSEngine(UnifiedTTSEngine):
     """Production drop-in alias."""
     pass
 
@@ -228,8 +261,9 @@ class LocalTTSEngine(NeuralONNXTTSEngine):
 class Pyttsx3TTS(TTSEngine):
     """Legacy Desktop fallback."""
     def synthesize(self, text: str, language: str = "en", output_path: str = None, play_audio: bool = True):
-        raise NotImplementedError("SAPI5 / pyttsx3 is disabled in production. Use NeuralONNXTTSEngine.")
+        raise NotImplementedError("SAPI5 / pyttsx3 is disabled in production. Use NeuralONNXTTSEngine or UnifiedTTSEngine.")
 
 # Backward compatibility aliases
 Pyttsx3TTSEngine = Pyttsx3TTS
 NeuralTTSEngine = NeuralONNXTTSEngine
+

@@ -117,7 +117,9 @@ class WhisperSTT(STTEngine):
 
         silence_hallucinations = [
             "thank you.", "thank you", "thank you for watching", 
-            "thank you for watching.", "subtitles by", "bye bye", "amara.org"
+            "thank you for watching.", "thank you very much.", "thank you very much",
+            "thanks for watching.", "thanks for watching", "subtitles by", "bye bye", 
+            "amara.org", "you", "the", "...", "."
         ]
         if cleaned.strip().lower() in silence_hallucinations:
             return ""
@@ -132,16 +134,37 @@ class WhisperSTT(STTEngine):
             audio_processed = self.preprocess_audio(audio, sample_rate, target_sr=16000)
 
         rms = np.sqrt(np.mean(audio_processed**2)) if len(audio_processed) > 0 else 0.0
-        if rms < 0.003 or len(audio_processed) < 1600:
+        if rms < 0.002 or len(audio_processed) < 1600:
             return "", 0.001
 
-        lang_code = "english" if language.lower() in ["en", "english"] else ("tamil" if language.lower() in ["ta", "tamil"] else ("hindi" if language.lower() in ["hi", "hindi"] else language))
+        # Peak normalization for optimal acoustic recognition
+        max_peak = np.max(np.abs(audio_processed))
+        if max_peak > 0.005:
+            audio_processed = (audio_processed / max_peak * 0.95).astype(np.float32)
+
+        lang_key = language.lower()[:2] if language else "en"
+        whisper_lang_map = {
+            "en": "english",
+            "hi": "hindi",
+            "te": "telugu",
+            "ml": "malayalam",
+            "ta": "tamil",
+            "kn": "kannada",
+            "mr": "marathi",
+            "bn": "bengali",
+            "gu": "gujarati",
+            "or": "oriya",
+        }
+        lang_code = whisper_lang_map.get(lang_key, "english")
+
         generate_kwargs = {
             "language": lang_code,
             "task": "transcribe",
             "no_repeat_ngram_size": 3,
-            "repetition_penalty": 1.25,
-            "max_new_tokens": 96
+            "repetition_penalty": 1.3,
+            "max_new_tokens": 64,
+            "num_beams": 1,
+            "do_sample": False
         }
 
         start_time = time.perf_counter()

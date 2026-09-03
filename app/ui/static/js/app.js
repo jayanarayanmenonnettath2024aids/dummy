@@ -260,6 +260,9 @@ async function startPTT() {
             audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
             const source = audioContext.createMediaStreamSource(micStream);
             
+            const trueSampleRate = audioContext.sampleRate || 16000;
+            console.log(`[AudioContext Initialized] Sample Rate: ${trueSampleRate} Hz`);
+            
             analyser = audioContext.createAnalyser();
             analyser.fftSize = 256;
             source.connect(analyser);
@@ -290,7 +293,11 @@ async function stopPTT() {
     updateRecordingUI(false, true);
 
     if (scriptProcessor && micStream) {
+        let sampleRate = 16000;
         try {
+            if (audioContext && audioContext.sampleRate) {
+                sampleRate = audioContext.sampleRate;
+            }
             scriptProcessor.disconnect();
             micStream.getTracks().forEach(track => track.stop());
             if (audioContext && audioContext.state !== "closed") {
@@ -304,7 +311,8 @@ async function stopPTT() {
         initVisualizer();
 
         let totalLen = recordedAudioBuffers.reduce((acc, curr) => acc + curr.length, 0);
-        if (totalLen === 0) {
+        if (totalLen === 0 || totalLen < sampleRate * 0.2) {
+            // Less than 200ms of audio, ignore micro-clicks
             updateRecordingUI(false, false);
             return;
         }
@@ -316,7 +324,7 @@ async function stopPTT() {
             offset += chunk.length;
         }
 
-        const wavBlob = encodePCM16WAV(flatAudio, 16000);
+        const wavBlob = encodePCM16WAV(flatAudio, sampleRate);
         const formData = new FormData();
         formData.append("file", wavBlob, "ptt_speech.wav");
         

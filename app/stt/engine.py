@@ -157,8 +157,15 @@ class WhisperSTT(STTEngine):
         }
         lang_code = whisper_lang_map.get(lang_key, "english")
 
+        # Explicitly force native Indic script decoder prompt IDs
+        forced_ids = None
+        try:
+            if hasattr(self._pipeline, "tokenizer") and hasattr(self._pipeline.tokenizer, "get_decoder_prompt_ids"):
+                forced_ids = self._pipeline.tokenizer.get_decoder_prompt_ids(language=lang_code, task="transcribe")
+        except Exception:
+            pass
+
         generate_kwargs = {
-            "language": lang_code,
             "task": "transcribe",
             "no_repeat_ngram_size": 3,
             "repetition_penalty": 1.3,
@@ -166,6 +173,10 @@ class WhisperSTT(STTEngine):
             "num_beams": 1,
             "do_sample": False
         }
+        if forced_ids:
+            generate_kwargs["forced_decoder_ids"] = forced_ids
+        else:
+            generate_kwargs["language"] = lang_code
 
         start_time = time.perf_counter()
         result = self._pipeline(

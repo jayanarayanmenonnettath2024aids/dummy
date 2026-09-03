@@ -81,19 +81,6 @@ function initWebSocket() {
 
 function startPollingFallback() {
     pollingInterval = setInterval(async () => {
-        // Only poll events via HTTP if WebSocket is disconnected
-        if (!ws || ws.readyState !== WebSocket.OPEN) {
-            try {
-                const res = await fetch("/api/events");
-                if (res.ok) {
-                    const events = await res.json();
-                    if (events && events.length > 0) {
-                        events.forEach(handleServerEvent);
-                    }
-                }
-            } catch (e) {}
-        }
-
         try {
             await fetchDiscoveredDevices();
         } catch (e) {}
@@ -122,6 +109,15 @@ async function initStatus() {
 
         if (data.operating_mode) {
             setModeUI(data.operating_mode === "voice_mode" ? "voice" : "ptt");
+        }
+
+        // Fetch initial historical events once on page load
+        const evRes = await fetch("/api/events");
+        if (evRes.ok) {
+            const history = await evRes.json();
+            if (history && history.length > 0) {
+                history.forEach(handleServerEvent);
+            }
         }
     } catch (e) {
         console.error("Failed to fetch initial status:", e);

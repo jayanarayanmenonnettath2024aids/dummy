@@ -125,6 +125,7 @@ def create_app(
         is_alert = (packet.priority == iTantraPacketV2.PRIORITY_ALERT or packet.message_type == iTantraPacketV2.MESSAGE_TYPE_ALERT)
 
         event_data = {
+            "id": f"{packet.sender_id}_{packet.session_id}_{packet.sequence_number}_rx_{packet.timestamp}",
             "type": "MESSAGE_RECEIVED",
             "direction": "incoming",
             "sender": packet.sender_id,
@@ -157,6 +158,7 @@ def create_app(
         is_alert = (packet.priority == iTantraPacketV2.PRIORITY_ALERT or packet.message_type == iTantraPacketV2.MESSAGE_TYPE_ALERT)
 
         event_data = {
+            "id": f"{_node_name}_{packet.session_id}_{packet.sequence_number}_tx_{packet.timestamp}",
             "type": "MESSAGE_SENT",
             "direction": "outgoing",
             "sender": _node_name,

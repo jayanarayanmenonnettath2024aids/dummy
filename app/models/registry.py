@@ -29,6 +29,29 @@ class LanguageProfile:
     stt_engine_type: str = "whisper"      # "whisper", "onnx", "none"
     tts_engine_type: str = "neural_onnx"  # "neural_onnx", "none"
 
+    # Explicit Block 9 Language States
+    STATUS_SUPPORTED_VERIFIED = "SUPPORTED + VERIFIED"
+    STATUS_STT_ONLY = "STT ONLY"
+    STATUS_TTS_ONLY = "TTS ONLY"
+    STATUS_AVAILABLE_NOT_VERIFIED = "MODEL AVAILABLE — NOT VERIFIED"
+    STATUS_NO_SUITABLE_MODEL = "NO SUITABLE MODEL"
+    STATUS_DEFERRED = "DEFERRED"
+
+    def get_explicit_state(self) -> str:
+        """Returns the exact standardized explicit language state."""
+        if self.code == "or":
+            return self.STATUS_DEFERRED
+        if self.stt_installed and self.tts_installed:
+            if self.stt_tested and self.tts_tested:
+                return self.STATUS_SUPPORTED_VERIFIED
+            return self.STATUS_AVAILABLE_NOT_VERIFIED
+        elif self.stt_installed and not self.tts_installed:
+            return self.STATUS_STT_ONLY
+        elif not self.stt_installed and self.tts_installed:
+            return self.STATUS_TTS_ONLY
+        else:
+            return self.STATUS_NO_SUITABLE_MODEL
+
     # Backward compatibility properties
     @property
     def stt_available(self) -> bool:
@@ -62,6 +85,7 @@ class LanguageProfile:
             "sample_rate": self.sample_rate,
             "stt_engine_type": self.stt_engine_type,
             "tts_engine_type": self.tts_engine_type,
+            "explicit_state": self.get_explicit_state(),
             "status": "VERIFIED (FULL)" if (self.stt_tested and self.tts_tested) else (
                 "PARTIAL (STT ONLY)" if (self.stt_tested and not self.tts_tested) else (
                     "INSTALLED — NOT VERIFIED" if (self.stt_installed or self.tts_installed) else "UNAVAILABLE"

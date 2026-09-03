@@ -81,12 +81,11 @@ class iTantraPacket:
         return json_str.encode('utf-8')
 
     @classmethod
-    def from_bytes(cls, raw_bytes: bytes) -> "iTantraPacket":
+    def from_bytes(cls, raw_bytes: bytes):
         """Deserialize UTF-8 JSON bytes or binary V2 bytes to packet."""
         from app.communication.packet_v2 import MAGIC_HEADER, iTantraPacketV2
         if raw_bytes.startswith(MAGIC_HEADER):
-            v2 = iTantraPacketV2.from_binary(raw_bytes)
-            return cls.from_dict(v2.to_dict())
+            return iTantraPacketV2.from_binary(raw_bytes)
         json_str = raw_bytes.decode('utf-8')
         data = json.loads(json_str)
         return cls.from_dict(data)

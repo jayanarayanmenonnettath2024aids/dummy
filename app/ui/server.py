@@ -378,6 +378,14 @@ def create_app(
         })
         return {"status": "success", "operating_mode": _operating_mode}
 
+    @app.post("/api/language/set")
+    async def set_active_language(data: Dict[str, Any]):
+        """Synchronize active target language for both PTT and VAD speech processing."""
+        nonlocal _current_lang
+        new_lang = data.get("language", "en")
+        _current_lang = new_lang
+        return {"status": "success", "language": _current_lang}
+
     @app.get("/api/priority/queue")
     async def get_priority_queue():
         """Inspect the receiver priority playback queue status."""

@@ -181,6 +181,7 @@ class WhisperSTT(STTEngine):
         generate_kwargs = {
             "task": "transcribe",
             "language": lang_code,
+            "suppress_tokens": [50358],  # Hard-suppress <|translate|> token
             "max_new_tokens": 64,
             "num_beams": 1,
             "do_sample": False

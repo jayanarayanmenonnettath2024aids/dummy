@@ -34,6 +34,7 @@ document.addEventListener("DOMContentLoaded", () => {
     initDiscovery();
     initModeSwitch();
     initPrioritySelector();
+    initLanguageSelector();
     initVisualizer();
     initPTTControls();
     initKeyboardShortcuts();
@@ -41,6 +42,24 @@ document.addEventListener("DOMContentLoaded", () => {
     initConnectForm();
     startPollingFallback();
 });
+
+function initLanguageSelector() {
+    const sel = document.getElementById("languageSelect");
+    if (!sel) return;
+    sel.addEventListener("change", async () => {
+        const lang = sel.value;
+        try {
+            await fetch("/api/language/set", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ language: lang })
+            });
+            console.log(`[Language Synchronized] Set to: ${lang}`);
+        } catch (e) {
+            console.warn("Language sync error:", e);
+        }
+    });
+}
 
 // 1. WebSocket Management & Polling Fallback
 function initWebSocket() {

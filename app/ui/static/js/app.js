@@ -691,9 +691,9 @@ function renderDiscoveredDevices(devices) {
             </div>
 
             <button class="btn-device-connect ${isActive ? "active" : ""}" 
-                    ${!isOnline || isActive ? "disabled" : ""} 
+                    ${isActive ? "disabled" : ""} 
                     onclick="connectToDiscoveredDevice('${escapeHtml(dev.node_id)}', '${escapeHtml(dev.ip)}', ${dev.port})">
-                ${isActive ? "✓ ACTIVE PEER LINK" : (isOnline ? "⚡ CONNECT" : "🔴 OFFLINE")}
+                ${isActive ? "✓ ACTIVE PEER LINK" : "⚡ CONNECT"}
             </button>
         `;
 

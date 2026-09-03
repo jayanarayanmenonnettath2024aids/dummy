@@ -195,7 +195,7 @@ def create_app(
         languages=["en", "hi", "te", "ml", "ta", "kn", "mr", "bn", "gu"],
         capabilities=["stt", "tts", "ptt", "vad", "priority"],
         protocol_version="2.0",
-        stale_timeout=15.0
+        stale_timeout=120.0
     )
 
     def on_discovery_event(device: DiscoveredDevice):

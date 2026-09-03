@@ -39,7 +39,7 @@ class MdnsDeviceDiscovery(DeviceDiscovery):
         languages: Optional[List[str]] = None,
         capabilities: Optional[List[str]] = None,
         protocol_version: str = "1.0",
-        stale_timeout: float = 15.0,
+        stale_timeout: float = 120.0,
         zeroconf_instance: Optional[Zeroconf] = None
     ):
         self.node_id = node_id or socket.gethostname() or "NODE-ALPHA"
@@ -68,6 +68,7 @@ class MdnsDeviceDiscovery(DeviceDiscovery):
 
         self._is_running = False
         self._stale_thread: Optional[threading.Thread] = None
+        self._heartbeat_thread: Optional[threading.Thread] = None
 
     def _detect_local_ip(self) -> str:
         """Helper to get local IPv4 address."""
@@ -132,9 +133,23 @@ class MdnsDeviceDiscovery(DeviceDiscovery):
         self._listener = _MdnsListener(self)
         self._browser = ServiceBrowser(self._zc, SERVICE_TYPE, self._listener)
 
-        # 3. Start background stale timeout checker
+        # 3. Start background stale timeout checker and announcement heartbeat
         self._stale_thread = threading.Thread(target=self._stale_check_loop, daemon=True)
         self._stale_thread.start()
+        self._heartbeat_thread = threading.Thread(target=self._heartbeat_announcement_loop, daemon=True)
+        self._heartbeat_thread.start()
+
+    def _heartbeat_announcement_loop(self) -> None:
+        """Periodically re-announce local node on LAN so peer nodes maintain active status."""
+        while self._is_running:
+            time.sleep(15.0)
+            if not self._is_running:
+                break
+            if self._zc and self._service_info:
+                try:
+                    self._zc.update_service(self._service_info)
+                except Exception:
+                    pass
 
     def _handle_service_resolved(self, zc: Zeroconf, type_: str, name: str) -> None:
         """Process resolved mDNS service information."""

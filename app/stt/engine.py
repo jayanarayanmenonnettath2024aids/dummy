@@ -180,14 +180,13 @@ class WhisperSTT(STTEngine):
 
         generate_kwargs = {
             "task": "transcribe",
+            "language": lang_code,
             "max_new_tokens": 64,
             "num_beams": 1,
             "do_sample": False
         }
         if forced_ids:
             generate_kwargs["forced_decoder_ids"] = forced_ids
-        else:
-            generate_kwargs["language"] = lang_code
 
         start_time = time.perf_counter()
         result = self._pipeline(

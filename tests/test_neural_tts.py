@@ -73,13 +73,13 @@ class TestNeuralONNXTTS(unittest.TestCase):
 
     # 7. Missing Model Handling (Zero SAPI5 fallback)
     def test_07_missing_model_handling_no_sapi5(self):
-        # Tamil currently has no neural ONNX model installed
+        # Gujarati currently has no neural ONNX model installed
         with self.assertRaises(ValueError):
-            self.tts.synthesize("வணக்கம்", language="ta", play_audio=False)
+            self.tts.synthesize("નમસ્તે", language="gu", play_audio=False)
 
         # ModelManager must also raise ModelNotInstalledError
         with self.assertRaises(ModelNotInstalledError):
-            self.manager.load_model("ta", task="tts")
+            self.manager.load_model("gu", task="tts")
 
     # 8. No Network Dependency
     def test_08_no_network_dependency(self):
@@ -98,9 +98,9 @@ class TestNeuralONNXTTS(unittest.TestCase):
         self.assertEqual(en_prof.tts_disk_size_mib, 60.27)
         self.assertTrue(en_prof.tts_available)
 
-        ta_prof = [p for p in profiles if p.code == "ta"][0]
-        self.assertFalse(ta_prof.tts_available)
-        self.assertEqual(ta_prof.tts_engine_type, "none")
+        gu_prof = [p for p in profiles if p.code == "gu"][0]
+        self.assertFalse(gu_prof.tts_available)
+        self.assertEqual(gu_prof.tts_engine_type, "none")
 
     # 10. Runtime Memory Measurement
     def test_10_runtime_memory_measurement(self):

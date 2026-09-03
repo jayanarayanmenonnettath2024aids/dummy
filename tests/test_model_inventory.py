@@ -43,16 +43,16 @@ class TestModelInventory(unittest.TestCase):
         self.assertTrue(self.manager.is_available("ta", "stt"))
         self.assertTrue(self.manager.is_available("hi", "stt"))
 
-        # GU, BN are not yet verified for TTS
+        # GU, OR are not yet verified for TTS
         self.assertFalse(self.manager.is_available("gu", "tts"))
-        self.assertFalse(self.manager.is_available("bn", "tts"))
+        self.assertFalse(self.manager.is_available("or", "tts"))
 
     # 4. Installed vs tested distinction
     def test_04_installed_vs_tested_distinction(self):
         gu_profile = self.manager._registry["gu"]
-        # STT weights are present via shared multilingual Whisper-tiny, but not verified
+        # STT weights are present via shared multilingual Whisper-tiny
         self.assertTrue(gu_profile.stt_installed)
-        self.assertFalse(gu_profile.stt_tested)
+        self.assertTrue(gu_profile.stt_tested)
         # TTS is not installed
         self.assertFalse(gu_profile.tts_installed)
         self.assertFalse(gu_profile.tts_tested)
@@ -80,14 +80,14 @@ class TestModelInventory(unittest.TestCase):
         self.assertTrue(info["android_compatible"])
         self.assertTrue(tts.is_language_supported("en"))
         self.assertTrue(tts.is_language_supported("hi"))
-        self.assertFalse(tts.is_language_supported("ta"))
+        self.assertFalse(tts.is_language_supported("gu"))
 
     # 8. No duplicate model accounting
     def test_08_no_duplicate_model_accounting(self):
         total_disk = self.manager.get_total_disk_footprint_mib()
-        # Total disk: 148.23 (Whisper) + 2.22 (VAD) + 4x VITS TTS (~60 MiB each) = ~391.0 MiB
+        # Total disk: 148.23 (Whisper) + 2.22 (VAD) + 4x Piper TTS (240.55) + 1x VITS-RASA (117.62) = 508.62 MiB
         # It must NOT be 10 x 148.23 + 10 x 60 = 2082 MiB!
-        self.assertLess(total_disk, 450.0, f"Expected non-duplicated disk footprint < 450 MiB, got {total_disk} MiB")
+        self.assertLess(total_disk, 550.0, f"Expected non-duplicated disk footprint < 550 MiB, got {total_disk} MiB")
         self.assertGreater(total_disk, 200.0)
 
         unique_models = self.manager.get_unique_models()

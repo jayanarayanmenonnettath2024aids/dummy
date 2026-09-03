@@ -82,9 +82,9 @@ class TestQuantizationAndEdgeOptimization(unittest.TestCase):
     def test_06_missing_model_handling(self):
         mm = ModelManager()
         with self.assertRaises(ModelNotInstalledError):
-            mm.load_model("ta", task="tts")
-        with self.assertRaises(ModelNotInstalledError):
             mm.load_model("gu", task="tts")
+        with self.assertRaises(ModelNotInstalledError):
+            mm.load_model("or", task="tts")
         with self.assertRaises(ModelNotInstalledError):
             mm.load_model("or", task="stt")
 

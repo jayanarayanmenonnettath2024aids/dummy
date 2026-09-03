@@ -55,22 +55,20 @@ class TestBlock6_5Multilingual(unittest.TestCase):
 
     # 5. Model availability detection
     def test_05_model_availability_detection(self):
-        # 4 full languages
-        self.assertTrue(self.manager.is_available("en", "all"))
-        self.assertTrue(self.manager.is_available("hi", "all"))
-        self.assertTrue(self.manager.is_available("te", "all"))
-        self.assertTrue(self.manager.is_available("ml", "all"))
-        # 5 STT-only languages
-        self.assertTrue(self.manager.is_available("ta", "stt"))
-        self.assertFalse(self.manager.is_available("ta", "tts"))
-        self.assertFalse(self.manager.is_available("ta", "all"))
+        # 8 full languages (4 Piper + 4 VITS-RASA)
+        for code in ["en", "hi", "te", "ml", "ta", "kn", "mr", "bn"]:
+            self.assertTrue(self.manager.is_available(code, "all"))
+        # 1 STT-only language (Gujarati)
+        self.assertTrue(self.manager.is_available("gu", "stt"))
+        self.assertFalse(self.manager.is_available("gu", "tts"))
+        self.assertFalse(self.manager.is_available("gu", "all"))
 
     # 6. Missing-model handling (Honest exception, zero SAPI5 fallback)
     def test_06_missing_model_handling(self):
         with self.assertRaises(ModelNotInstalledError):
-            self.manager.load_model("ta", task="tts")
-        with self.assertRaises(ModelNotInstalledError):
             self.manager.load_model("gu", task="tts")
+        with self.assertRaises(ModelNotInstalledError):
+            self.manager.load_model("or", task="tts")
 
     # 7. Precision selection
     def test_07_precision_selection(self):
@@ -103,9 +101,10 @@ class TestBlock6_5Multilingual(unittest.TestCase):
     def test_11_tamil_pipeline(self):
         profile = DEFAULT_LANGUAGE_REGISTRY["ta"]
         self.assertTrue(profile.stt_installed)
-        self.assertFalse(profile.tts_installed)
-        with self.assertRaises(ModelNotInstalledError):
-            self.manager.load_model("ta", task="tts")
+        self.assertTrue(profile.tts_installed)
+        tts = self.manager.load_model("ta", task="tts")
+        out, lat = tts.synthesize("கட்டளை தகவல்.", language="ta", play_audio=False)
+        self.assertTrue(os.path.exists(out))
 
     # 12. Gujarati pipeline
     def test_12_gujarati_pipeline(self):
@@ -119,17 +118,19 @@ class TestBlock6_5Multilingual(unittest.TestCase):
     def test_13_marathi_pipeline(self):
         profile = DEFAULT_LANGUAGE_REGISTRY["mr"]
         self.assertTrue(profile.stt_installed)
-        self.assertFalse(profile.tts_installed)
-        with self.assertRaises(ModelNotInstalledError):
-            self.manager.load_model("mr", task="tts")
+        self.assertTrue(profile.tts_installed)
+        tts = self.manager.load_model("mr", task="tts")
+        out, lat = tts.synthesize("कमांड माहिती.", language="mr", play_audio=False)
+        self.assertTrue(os.path.exists(out))
 
     # 14. Kannada pipeline
     def test_14_kannada_pipeline(self):
         profile = DEFAULT_LANGUAGE_REGISTRY["kn"]
         self.assertTrue(profile.stt_installed)
-        self.assertFalse(profile.tts_installed)
-        with self.assertRaises(ModelNotInstalledError):
-            self.manager.load_model("kn", task="tts")
+        self.assertTrue(profile.tts_installed)
+        tts = self.manager.load_model("kn", task="tts")
+        out, lat = tts.synthesize("ಆದೇಶ ಮಾಹಿತಿ.", language="kn", play_audio=False)
+        self.assertTrue(os.path.exists(out))
 
     # 15. Malayalam pipeline
     def test_15_malayalam_pipeline(self):
@@ -149,9 +150,10 @@ class TestBlock6_5Multilingual(unittest.TestCase):
     def test_17_bengali_pipeline(self):
         profile = DEFAULT_LANGUAGE_REGISTRY["bn"]
         self.assertTrue(profile.stt_installed)
-        self.assertFalse(profile.tts_installed)
-        with self.assertRaises(ModelNotInstalledError):
-            self.manager.load_model("bn", task="tts")
+        self.assertTrue(profile.tts_installed)
+        tts = self.manager.load_model("bn", task="tts")
+        out, lat = tts.synthesize("কমান্ড তথ্য.", language="bn", play_audio=False)
+        self.assertTrue(os.path.exists(out))
 
     # 18. English pipeline
     def test_18_english_pipeline(self):

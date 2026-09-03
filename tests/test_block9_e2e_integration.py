@@ -133,18 +133,16 @@ class TestBlock9E2EIntegration(unittest.TestCase):
 
     # 5. Explicit Language States Verification
     def test_05_explicit_language_states(self):
-        # 4 Fully Supported + Verified
-        self.assertEqual(DEFAULT_LANGUAGE_REGISTRY["en"].get_explicit_state(), LanguageProfile.STATUS_SUPPORTED_VERIFIED)
-        self.assertEqual(DEFAULT_LANGUAGE_REGISTRY["hi"].get_explicit_state(), LanguageProfile.STATUS_SUPPORTED_VERIFIED)
-        self.assertEqual(DEFAULT_LANGUAGE_REGISTRY["te"].get_explicit_state(), LanguageProfile.STATUS_SUPPORTED_VERIFIED)
-        self.assertEqual(DEFAULT_LANGUAGE_REGISTRY["ml"].get_explicit_state(), LanguageProfile.STATUS_SUPPORTED_VERIFIED)
+        # 8 Fully Supported + Verified (4 Piper + 4 VITS-RASA)
+        for code in ["en", "hi", "te", "ml", "ta", "kn", "mr", "bn"]:
+            self.assertEqual(
+                DEFAULT_LANGUAGE_REGISTRY[code].get_explicit_state(),
+                LanguageProfile.STATUS_SUPPORTED_VERIFIED,
+                f"Language {code} should be SUPPORTED + VERIFIED"
+            )
 
-        # 5 STT-Only Languages
-        self.assertEqual(DEFAULT_LANGUAGE_REGISTRY["ta"].get_explicit_state(), LanguageProfile.STATUS_STT_ONLY)
+        # 1 STT-Only Language (Gujarati)
         self.assertEqual(DEFAULT_LANGUAGE_REGISTRY["gu"].get_explicit_state(), LanguageProfile.STATUS_STT_ONLY)
-        self.assertEqual(DEFAULT_LANGUAGE_REGISTRY["mr"].get_explicit_state(), LanguageProfile.STATUS_STT_ONLY)
-        self.assertEqual(DEFAULT_LANGUAGE_REGISTRY["kn"].get_explicit_state(), LanguageProfile.STATUS_STT_ONLY)
-        self.assertEqual(DEFAULT_LANGUAGE_REGISTRY["bn"].get_explicit_state(), LanguageProfile.STATUS_STT_ONLY)
 
         # 1 Deferred Language (Odia)
         self.assertEqual(DEFAULT_LANGUAGE_REGISTRY["or"].get_explicit_state(), LanguageProfile.STATUS_DEFERRED)
@@ -159,9 +157,9 @@ class TestBlock9E2EIntegration(unittest.TestCase):
             model_path = os.path.join(tts.models_dir, meta["dir"], model_file)
             self.assertTrue(os.path.exists(model_path), f"Neural model missing for {code}: {model_path}")
 
-        # Tamil must fail cleanly with ModelNotInstalledError, never SAPI5
+        # Gujarati must fail cleanly with ModelNotInstalledError, never SAPI5
         with self.assertRaises(ModelNotInstalledError):
-            self.manager.load_model("ta", task="tts")
+            self.manager.load_model("gu", task="tts")
 
     # 7. Dual-Node Mutual Transceiver Loop with Raw 32B HMAC
     def test_07_dual_node_secure_transceiver_loop(self):

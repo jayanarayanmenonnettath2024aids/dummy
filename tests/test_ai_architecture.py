@@ -53,16 +53,15 @@ class TestAIArchitecture(unittest.TestCase):
         for expected in ["en", "hi", "ta", "gu", "mr", "kn", "ml", "te", "or", "bn"]:
             self.assertIn(expected, codes)
 
-        # Verify accurate reporting: English and Hindi have verified Neural ONNX TTS models
+        # Verify accurate reporting: English, Hindi, Tamil have verified Neural TTS models
         self.assertTrue(self.manager.is_available("en", "stt"))
         self.assertTrue(self.manager.is_available("en", "tts"))
         self.assertTrue(self.manager.is_available("hi", "stt"))
         self.assertTrue(self.manager.is_available("hi", "tts"))
         self.assertTrue(self.manager.is_available("ta", "stt"))
-        # Tamil STT is verified via shared Whisper, but Tamil Neural TTS is NOT AVAILABLE
-        self.assertFalse(self.manager.is_available("ta", "tts"))
-        self.assertFalse(self.manager.is_available("gu", "stt"))
-        self.assertFalse(self.manager.is_available("bn", "stt"))
+        self.assertTrue(self.manager.is_available("ta", "tts"))
+        self.assertFalse(self.manager.is_available("gu", "tts"))
+        self.assertFalse(self.manager.is_available("or", "tts"))
 
     # 4. Language selection
     def test_04_language_selection(self):
@@ -71,7 +70,6 @@ class TestAIArchitecture(unittest.TestCase):
         self.assertIn("en", installed_codes)
         self.assertIn("ta", installed_codes)
         self.assertIn("hi", installed_codes)
-        self.assertNotIn("gu", installed_codes)
 
     # 5. English STT
     def test_05_english_stt(self):
@@ -110,11 +108,11 @@ class TestAIArchitecture(unittest.TestCase):
     def test_09_model_unavailable_handling(self):
         # Attempting to load an uninstalled language must raise ModelNotInstalledError
         with self.assertRaises(ModelNotInstalledError) as ctx:
-            self.manager.load_model("gu", task="stt")
+            self.manager.load_model("or", task="stt")
         self.assertIn("MODEL NOT INSTALLED", str(ctx.exception))
 
         with self.assertRaises(ModelNotInstalledError) as ctx:
-            self.manager.load_model("bn", task="tts")
+            self.manager.load_model("gu", task="tts")
         self.assertIn("MODEL NOT INSTALLED", str(ctx.exception))
 
     # 10. No-cloud verification

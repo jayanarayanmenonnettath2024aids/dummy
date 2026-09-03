@@ -11,7 +11,8 @@ class LanguageProfile:
     """
     Profile defining local STT and Neural ONNX TTS capability for a given language.
     Strictly distinguishes disk footprint, runtime RAM, parameter counts,
-    and portable neural ONNX models. SAPI5 is not used as production TTS.
+    and portable neural ONNX models (Piper VITS or AI4Bharat VITS-RASA).
+    SAPI5 is not used as production TTS.
     """
     code: str                             # ISO 639-1 language code (e.g. 'en', 'ta', 'hi')
     name: str                             # Human readable language name
@@ -27,9 +28,9 @@ class LanguageProfile:
     runtime_ram_mib: float = SHARED_WHISPER_RAM_MIB
     sample_rate: int = 16000
     stt_engine_type: str = "whisper"      # "whisper", "onnx", "none"
-    tts_engine_type: str = "neural_onnx"  # "neural_onnx", "none"
+    tts_engine_type: str = "neural_onnx"  # "neural_onnx" (Piper), "vits_rasa", "none"
 
-    # Explicit Block 9 Language States
+    # Explicit Language States
     STATUS_SUPPORTED_VERIFIED = "SUPPORTED + VERIFIED"
     STATUS_STT_ONLY = "STT ONLY"
     STATUS_TTS_ONLY = "TTS ONLY"
@@ -164,17 +165,65 @@ DEFAULT_LANGUAGE_REGISTRY: Dict[str, LanguageProfile] = {
         code="ta",
         name="Tamil",
         stt_model="openai/whisper-tiny",
-        tts_model="None (UNAVAILABLE)",
+        tts_model="AI4Bharat VITS-RASA (vits_rasa_13)",
         stt_installed=True,
         stt_tested=True,
-        tts_installed=False,
-        tts_tested=False,
+        tts_installed=True,
+        tts_tested=True,
         is_shared_stt_model=True,
         disk_size_mib=148.23,
-        tts_disk_size_mib=0.0,
+        tts_disk_size_mib=117.62,
         runtime_ram_mib=416.25,
         stt_engine_type="whisper",
-        tts_engine_type="none"
+        tts_engine_type="vits_rasa"
+    ),
+    "kn": LanguageProfile(
+        code="kn",
+        name="Kannada",
+        stt_model="openai/whisper-tiny",
+        tts_model="AI4Bharat VITS-RASA (vits_rasa_13)",
+        stt_installed=True,
+        stt_tested=True,
+        tts_installed=True,
+        tts_tested=True,
+        is_shared_stt_model=True,
+        disk_size_mib=148.23,
+        tts_disk_size_mib=117.62,
+        runtime_ram_mib=416.25,
+        stt_engine_type="whisper",
+        tts_engine_type="vits_rasa"
+    ),
+    "mr": LanguageProfile(
+        code="mr",
+        name="Marathi",
+        stt_model="openai/whisper-tiny",
+        tts_model="AI4Bharat VITS-RASA (vits_rasa_13)",
+        stt_installed=True,
+        stt_tested=True,
+        tts_installed=True,
+        tts_tested=True,
+        is_shared_stt_model=True,
+        disk_size_mib=148.23,
+        tts_disk_size_mib=117.62,
+        runtime_ram_mib=416.25,
+        stt_engine_type="whisper",
+        tts_engine_type="vits_rasa"
+    ),
+    "bn": LanguageProfile(
+        code="bn",
+        name="Bengali",
+        stt_model="openai/whisper-tiny",
+        tts_model="AI4Bharat VITS-RASA (vits_rasa_13)",
+        stt_installed=True,
+        stt_tested=True,
+        tts_installed=True,
+        tts_tested=True,
+        is_shared_stt_model=True,
+        disk_size_mib=148.23,
+        tts_disk_size_mib=117.62,
+        runtime_ram_mib=416.25,
+        stt_engine_type="whisper",
+        tts_engine_type="vits_rasa"
     ),
     "gu": LanguageProfile(
         code="gu",
@@ -182,55 +231,7 @@ DEFAULT_LANGUAGE_REGISTRY: Dict[str, LanguageProfile] = {
         stt_model="openai/whisper-tiny",
         tts_model="None (UNAVAILABLE)",
         stt_installed=True,
-        stt_tested=False,
-        tts_installed=False,
-        tts_tested=False,
-        is_shared_stt_model=True,
-        disk_size_mib=148.23,
-        tts_disk_size_mib=0.0,
-        runtime_ram_mib=416.25,
-        stt_engine_type="whisper",
-        tts_engine_type="none"
-    ),
-    "mr": LanguageProfile(
-        code="mr",
-        name="Marathi",
-        stt_model="openai/whisper-tiny",
-        tts_model="None (UNAVAILABLE)",
-        stt_installed=True,
-        stt_tested=False,
-        tts_installed=False,
-        tts_tested=False,
-        is_shared_stt_model=True,
-        disk_size_mib=148.23,
-        tts_disk_size_mib=0.0,
-        runtime_ram_mib=416.25,
-        stt_engine_type="whisper",
-        tts_engine_type="none"
-    ),
-    "kn": LanguageProfile(
-        code="kn",
-        name="Kannada",
-        stt_model="openai/whisper-tiny",
-        tts_model="None (UNAVAILABLE)",
-        stt_installed=True,
-        stt_tested=False,
-        tts_installed=False,
-        tts_tested=False,
-        is_shared_stt_model=True,
-        disk_size_mib=148.23,
-        tts_disk_size_mib=0.0,
-        runtime_ram_mib=416.25,
-        stt_engine_type="whisper",
-        tts_engine_type="none"
-    ),
-    "bn": LanguageProfile(
-        code="bn",
-        name="Bengali",
-        stt_model="openai/whisper-tiny",
-        tts_model="None (UNAVAILABLE)",
-        stt_installed=True,
-        stt_tested=False,
+        stt_tested=True,
         tts_installed=False,
         tts_tested=False,
         is_shared_stt_model=True,

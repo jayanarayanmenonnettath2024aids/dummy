@@ -167,8 +167,14 @@ class ModelManager:
             if cache_key in self._loaded_tts_engines:
                 return self._loaded_tts_engines[cache_key]
             
-            from app.tts.engine import NeuralONNXTTSEngine
-            engine = NeuralONNXTTSEngine(precision=self.precision)
+            profile = self._registry[lang]
+            if profile.tts_engine_type == "vits_rasa":
+                from app.tts.vits_rasa_engine import NeuralVitsRasaTTSEngine
+                engine = NeuralVitsRasaTTSEngine(precision=self.precision)
+            else:
+                from app.tts.engine import NeuralONNXTTSEngine
+                engine = NeuralONNXTTSEngine(precision=self.precision)
+
             self._loaded_tts_engines[cache_key] = engine
             return engine
 

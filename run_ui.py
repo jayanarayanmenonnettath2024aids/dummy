@@ -75,12 +75,13 @@ def main():
     local_ip = get_local_ip()
     print_banner(args.web_port, args.tcp_port, args.peer_host, args.peer_port, local_ip)
 
+    node_name = args.node_name or socket.gethostname() or "NODE-ALPHA"
     app = create_app(
         tcp_listen_port=args.tcp_port,
         peer_host=args.peer_host,
         peer_port=args.peer_port,
         language=args.lang,
-        node_name=args.node_name
+        node_name=node_name
     )
 
     if not args.no_browser:

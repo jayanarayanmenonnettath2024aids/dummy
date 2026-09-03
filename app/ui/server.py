@@ -93,6 +93,17 @@ def create_app(
     except Exception:
         pass
 
+    # Background model pre-warming to eliminate first-speech cold-start latency
+    import threading
+    def _warmup_stt_async():
+        try:
+            stt = get_stt()
+            dummy_pcm = np.zeros(8000, dtype=np.float32)
+            stt.transcribe(dummy_pcm, sample_rate=16000, language="en")
+        except Exception:
+            pass
+    threading.Thread(target=_warmup_stt_async, daemon=True, name="STTWarmup").start()
+
     # Initialize Priority Playback Controller
     def on_playback_event(event_dict: Dict[str, Any]):
         asyncio.run_coroutine_threadsafe(

@@ -26,6 +26,7 @@ let totalMessages = 0;
 let currentActivePeer = { host: "127.0.0.1", port: 65432, node_id: null };
 let knownDevices = [];
 let currentOperatingMode = "walkie_talkie"; // "walkie_talkie" or "voice_mode"
+const renderedMessageIds = new Set();
 
 document.addEventListener("DOMContentLoaded", () => {
     initWebSocket();
@@ -80,15 +81,18 @@ function initWebSocket() {
 
 function startPollingFallback() {
     pollingInterval = setInterval(async () => {
-        try {
-            const res = await fetch("/api/events");
-            if (res.ok) {
-                const events = await res.json();
-                if (events && events.length > 0) {
-                    events.forEach(handleServerEvent);
+        // Only poll events via HTTP if WebSocket is disconnected
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            try {
+                const res = await fetch("/api/events");
+                if (res.ok) {
+                    const events = await res.json();
+                    if (events && events.length > 0) {
+                        events.forEach(handleServerEvent);
+                    }
                 }
-            }
-        } catch (e) {}
+            } catch (e) {}
+        }
 
         try {
             await fetchDiscoveredDevices();
@@ -458,6 +462,15 @@ function drawWaveform() {
 
 // 8. Append Message Cards with Priority Badges
 function appendMessageCard(msg) {
+    if (!msg) return;
+
+    // Deduplicate identical messages to prevent feed looping
+    const msgId = msg.id || `${msg.direction}_${msg.sender}_${msg.timestamp}_${msg.text}_${msg.audio_bytes || 0}_${msg.text_bytes || 0}`;
+    if (renderedMessageIds.has(msgId)) {
+        return;
+    }
+    renderedMessageIds.add(msgId);
+
     const feed = document.getElementById("conversationFeed");
     const emptyNotice = document.getElementById("emptyFeedNotice");
     if (emptyNotice) emptyNotice.remove();

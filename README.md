@@ -120,32 +120,32 @@ iTantra/
 
 ---
 
-## 5. Quick Start & Execution Guide
+## 5. 1-Click Clean Setup & Execution Guide
 
-### 5.1 Installation
-```bash
-pip install -r requirements.txt
+### 5.1 Automated Clean Setup (Windows)
+```cmd
+git clone https://github.com/jayanarayanmenonnettath2024aids/iTantra.git
+cd iTantra
+setup.bat
 ```
+> `setup.bat` automatically configures the Python virtual environment (`.venv`), installs dependencies from `requirements.txt`, downloads all required offline ONNX neural models, and runs live inference verification across all 8 supported neural languages.
 
 ---
 
-### 5.2 Option A: Tactical Walkie-Talkie Web UI (Recommended for Live Demo)
+### 5.2 Option A: Tactical Mission Control Web UI (Recommended for Live Demo)
 
 Start the Web UI on each laptop:
 
 ```bash
-# On Laptop 1 (e.g. 192.168.1.10):
-python run_ui.py --web-port 8000 --tcp-port 65432 --peer-host 192.168.1.20 --peer-port 65432
-
-# On Laptop 2 (e.g. 192.168.1.20):
-python run_ui.py --web-port 8000 --tcp-port 65432 --peer-host 192.168.1.10 --peer-port 65432
+.venv\Scripts\activate
+python run_ui.py
 ```
 > **Features**:
 > - Opens `http://localhost:8000` automatically in your browser.
-> - **Push-to-Talk (PTT)**: Hold **SPACEBAR** or click & hold the PTT button to transmit voice.
-> - **Bidirectional / Half-Duplex**: Either person can speak at any time; incoming speech automatically plays through the speakers.
-> - **Live Mission Control Telemetry**: Real-time waveform, data payload comparison (>99.7% reduction), and STT/Net/TTS latency waterfall charts.
-> - **One-Click Fallback Voice Samples**: Test emergency, checkpoint, and tactical voice samples with a single click.
+> - **Zero-Config mDNS Peer Discovery**: Automatically discovers remote nodes on local Wi-Fi / LAN.
+> - **Push-to-Talk (PTT) & Hands-Free VAD**: Dual-mode speech capture with spacebar or live microphone streaming.
+> - **Priority Preemption**: Immediate preemption and visual distress locking for critical alerts.
+> - **Live Mission Control Telemetry**: Real-time waveform, data payload comparison (>99.8% reduction), and STT/Net/TTS latency waterfall charts.
 
 ---
 

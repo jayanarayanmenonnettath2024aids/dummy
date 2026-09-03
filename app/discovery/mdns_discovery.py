@@ -2,7 +2,7 @@ import time
 import socket
 import threading
 from typing import List, Dict, Optional, Callable, Any
-from zeroconf import Zeroconf, ServiceInfo, ServiceBrowser, ServiceListener
+from zeroconf import Zeroconf, ServiceInfo, ServiceBrowser, ServiceListener, IPVersion
 
 from app.discovery.models import DiscoveredDevice
 from app.discovery.interface import DeviceDiscovery
@@ -118,7 +118,7 @@ class MdnsDeviceDiscovery(DeviceDiscovery):
 
         self._is_running = True
         if self._zc is None:
-            self._zc = Zeroconf()
+            self._zc = Zeroconf(ip_version=IPVersion.V4Only)
 
         # 1. Register local service
         self._service_info = self._create_service_info()

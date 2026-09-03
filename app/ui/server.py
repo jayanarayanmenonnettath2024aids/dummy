@@ -80,6 +80,19 @@ def create_app(
     # Event Loop handle for async broadcasts from thread callbacks
     loop = asyncio.get_event_loop()
 
+    def _async_exception_handler(ev_loop, context):
+        exception = context.get("exception")
+        # Suppress benign zeroconf background cache expiration notices from external LAN devices
+        msg = str(context.get("message", "")) + str(context.get("handle", ""))
+        if isinstance(exception, KeyError) or "zeroconf" in msg.lower():
+            return
+        ev_loop.default_exception_handler(context)
+
+    try:
+        loop.set_exception_handler(_async_exception_handler)
+    except Exception:
+        pass
+
     # Initialize Priority Playback Controller
     def on_playback_event(event_dict: Dict[str, Any]):
         asyncio.run_coroutine_threadsafe(

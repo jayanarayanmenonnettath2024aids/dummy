@@ -27,14 +27,39 @@ from app.metrics.metrics import PipelineMetrics
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def set_loop(self, loop: asyncio.AbstractEventLoop):
+        self._loop = loop
+
+    def get_loop(self) -> Optional[asyncio.AbstractEventLoop]:
+        if self._loop and self._loop.is_running():
+            return self._loop
+        try:
+            loop = asyncio.get_running_loop()
+            if loop and loop.is_running():
+                self._loop = loop
+                return loop
+        except RuntimeError:
+            pass
+        return self._loop
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
+        try:
+            self.set_loop(asyncio.get_running_loop())
+        except RuntimeError:
+            pass
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
+
+    def broadcast_threadsafe(self, message: dict):
+        loop = self.get_loop()
+        if loop and loop.is_running() and self.active_connections:
+            asyncio.run_coroutine_threadsafe(self.broadcast(message), loop)
 
     async def broadcast(self, message: dict):
         for connection in list(self.active_connections):
@@ -106,13 +131,10 @@ def create_app(
 
     # Initialize Priority Playback Controller
     def on_playback_event(event_dict: Dict[str, Any]):
-        asyncio.run_coroutine_threadsafe(
-            ws_manager.broadcast({
-                "type": "PLAYBACK_EVENT",
-                "data": event_dict
-            }),
-            loop
-        )
+        ws_manager.broadcast_threadsafe({
+            "type": "PLAYBACK_EVENT",
+            "data": event_dict
+        })
 
     playback_controller = PriorityPlaybackController(
         tts_engine=_tts_engine,
@@ -150,7 +172,7 @@ def create_app(
         _event_history.append(event_data)
         if len(_event_history) > 100:
             _event_history.pop(0)
-        asyncio.run_coroutine_threadsafe(ws_manager.broadcast(event_data), loop)
+        ws_manager.broadcast_threadsafe(event_data)
 
     def on_tx_callback(packet: iTantraPacketV2, metrics: PipelineMetrics):
         """Called when this node successfully transmits a message."""
@@ -183,7 +205,7 @@ def create_app(
         _event_history.append(event_data)
         if len(_event_history) > 100:
             _event_history.pop(0)
-        asyncio.run_coroutine_threadsafe(ws_manager.broadcast(event_data), loop)
+        ws_manager.broadcast_threadsafe(event_data)
 
     # Initialize Transceiver with Priority Playback Controller
     transceiver = PeerTransceiver(
@@ -216,7 +238,7 @@ def create_app(
             "type": "DEVICE_DISCOVERY_UPDATE",
             "devices": [d.to_dict() for d in discovery.get_devices()]
         }
-        asyncio.run_coroutine_threadsafe(ws_manager.broadcast(event_data), loop)
+        ws_manager.broadcast_threadsafe(event_data)
 
     discovery.on_device_added(on_discovery_event)
     discovery.on_device_removed(on_discovery_event)
@@ -242,10 +264,7 @@ def create_app(
         audio_bytes_len = len(utterance) * 2
         t1_start = time.time() - (duration_ms / 1000.0)
 
-        asyncio.run_coroutine_threadsafe(
-            ws_manager.broadcast({"type": "RECORDING_STATE", "recording": False, "processing": True}),
-            loop
-        )
+        ws_manager.broadcast_threadsafe({"type": "RECORDING_STATE", "recording": False, "processing": True})
 
         stt = get_stt()
         transcript, stt_latency = stt.transcribe(utterance, language=target_lang)
@@ -262,29 +281,20 @@ def create_app(
                 t2_stt=t2_finish
             )
 
-        asyncio.run_coroutine_threadsafe(
-            ws_manager.broadcast({"type": "RECORDING_STATE", "recording": False, "processing": False}),
-            loop
-        )
+        ws_manager.broadcast_threadsafe({"type": "RECORDING_STATE", "recording": False, "processing": False})
 
     def on_vad_state_change(state_name: str, payload: Dict[str, Any]):
         """Broadcast VAD speech start/end events to UI."""
         if _operating_mode != "voice_mode":
             return
         is_speech = (state_name == "SPEECH_STARTED")
-        asyncio.run_coroutine_threadsafe(
-            ws_manager.broadcast({
-                "type": "VAD_STATE",
-                "state": state_name,
-                "data": payload
-            }),
-            loop
-        )
+        ws_manager.broadcast_threadsafe({
+            "type": "VAD_STATE",
+            "state": state_name,
+            "data": payload
+        })
         if is_speech:
-            asyncio.run_coroutine_threadsafe(
-                ws_manager.broadcast({"type": "RECORDING_STATE", "recording": True, "processing": False}),
-                loop
-            )
+            ws_manager.broadcast_threadsafe({"type": "RECORDING_STATE", "recording": True, "processing": False})
 
     vad_processor = VADStreamProcessor(
         config=vad_config,
@@ -688,6 +698,13 @@ def create_app(
                 data = await websocket.receive_text()
         except WebSocketDisconnect:
             ws_manager.disconnect(websocket)
+
+    @app.on_event("startup")
+    async def startup_event():
+        try:
+            ws_manager.set_loop(asyncio.get_running_loop())
+        except RuntimeError:
+            pass
 
     @app.on_event("shutdown")
     def shutdown_event():

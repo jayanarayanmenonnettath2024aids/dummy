@@ -84,7 +84,17 @@ function startPollingFallback() {
         try {
             await fetchDiscoveredDevices();
         } catch (e) {}
-    }, 2000);
+
+        try {
+            const res = await fetch("/api/events");
+            if (res.ok) {
+                const events = await res.json();
+                if (events && Array.isArray(events)) {
+                    events.forEach(handleServerEvent);
+                }
+            }
+        } catch (e) {}
+    }, 1000);
 }
 
 function updateConnectionBadge(connected) {

@@ -524,6 +524,9 @@ function appendMessageCard(msg) {
     feed.appendChild(card);
     feed.scrollTop = feed.scrollHeight;
 
+    // Update Live Telemetry for this new message
+    updateTelemetryStats(msg);
+
     // Trigger visual emergency banner if Distress or Alert
     if (isDistress) {
         showEmergencyBanner("DISTRESS SIGNAL ACTIVE", `Priority Playback Lock Active: "${msg.text}"`, false);
@@ -557,26 +560,77 @@ function showEmergencyBanner(title, body, isAlertOnly) {
     }
 }
 
-// 9. Update Telemetry Dashboard Gauges
+// 9. Update Telemetry Dashboard Gauges for Each New Message
 function updateTelemetryStats(msg) {
+    if (!msg) return;
+
     totalMessages++;
     if (msg.audio_bytes) totalAudioBytes += msg.audio_bytes;
     if (msg.text_bytes) totalTextBytes += msg.text_bytes;
 
-    document.getElementById("totalMessagesCount").innerText = totalMessages;
-    document.getElementById("savedAudioBytes").innerText = `${(totalAudioBytes / 1024).toFixed(1)} KB`;
-    document.getElementById("transmittedTextBytes").innerText = `${totalTextBytes} Bytes`;
+    const countEl = document.getElementById("totalMessagesCount");
+    const savedAudioEl = document.getElementById("savedAudioBytes");
+    const textBytesEl = document.getElementById("transmittedTextBytes");
+    const redValEl = document.getElementById("overallReduction");
+    const redBarEl = document.getElementById("reductionProgressBar");
+    const senderTagEl = document.getElementById("lastMsgSender");
 
+    if (countEl) countEl.innerText = totalMessages;
+    if (savedAudioEl) savedAudioEl.innerText = `${(totalAudioBytes / 1024).toFixed(1)} KB`;
+    if (textBytesEl) textBytesEl.innerText = `${totalTextBytes} Bytes`;
+
+    let reductionPct = msg.reduction_percent || "99.8%";
     if (totalAudioBytes > 0) {
         const overallRed = (((totalAudioBytes - totalTextBytes) / totalAudioBytes) * 100).toFixed(2);
-        document.getElementById("overallReduction").innerText = `${overallRed}%`;
+        reductionPct = `${overallRed}%`;
+    }
+    if (redValEl) redValEl.innerText = reductionPct;
+    if (redBarEl) redBarEl.style.width = reductionPct;
+
+    if (senderTagEl) {
+        const dir = msg.direction === "outgoing" ? "TX: " : "RX: ";
+        senderTagEl.innerText = `(${dir}${msg.sender || "NODE"})`;
     }
 
     if (msg.latencies) {
-        document.getElementById("lastSttLatency").innerText = `${msg.latencies.stt_ms} ms`;
-        document.getElementById("lastNetLatency").innerText = `${msg.latencies.net_ms} ms`;
-        document.getElementById("lastTtsLatency").innerText = `${msg.latencies.tts_ms} ms`;
-        document.getElementById("lastE2eLatency").innerText = `${msg.latencies.e2e_ms} ms`;
+        const stt = Number(msg.latencies.stt_ms) || 0;
+        const net = Number(msg.latencies.net_ms) || 0;
+        const tts = Number(msg.latencies.tts_ms) || 0;
+        const e2e = Number(msg.latencies.e2e_ms) || (stt + net + tts) || 1;
+
+        const sttEl = document.getElementById("lastSttLatency");
+        const netEl = document.getElementById("lastNetLatency");
+        const ttsEl = document.getElementById("lastTtsLatency");
+        const e2eEl = document.getElementById("lastE2eLatency");
+
+        const sttBar = document.getElementById("sttLatencyBar");
+        const netBar = document.getElementById("netLatencyBar");
+        const ttsBar = document.getElementById("ttsLatencyBar");
+
+        if (sttEl) sttEl.innerText = `${stt.toFixed(1)} ms`;
+        if (netEl) netEl.innerText = `${net.toFixed(1)} ms`;
+        if (ttsEl) ttsEl.innerText = `${tts.toFixed(1)} ms`;
+        if (e2eEl) e2eEl.innerText = `${e2e.toFixed(1)} ms`;
+
+        // Dynamically compute proportional bar widths
+        const sttPct = Math.min(100, Math.max(stt > 0 ? 10 : 0, Math.round((stt / e2e) * 100)));
+        const netPct = Math.min(100, Math.max(net > 0 ? 10 : 0, Math.round((net / e2e) * 100)));
+        const ttsPct = Math.min(100, Math.max(tts > 0 ? 10 : 0, Math.round((tts / e2e) * 100)));
+
+        if (sttBar) sttBar.style.width = `${sttPct}%`;
+        if (netBar) netBar.style.width = `${netPct}%`;
+        if (ttsBar) ttsBar.style.width = `${ttsPct}%`;
+
+        // Visual pulse highlight on update
+        const card = document.getElementById("telemetryLatencyCard");
+        if (card) {
+            card.style.borderColor = "var(--accent-cyan)";
+            card.style.boxShadow = "0 0 16px rgba(0, 240, 255, 0.25)";
+            setTimeout(() => {
+                card.style.borderColor = "";
+                card.style.boxShadow = "";
+            }, 600);
+        }
     }
 }
 
@@ -746,7 +800,6 @@ async function connectToDiscoveredDevice(nodeId, ip, port) {
 function handleServerEvent(data) {
     if (data.type === "MESSAGE_RECEIVED" || data.type === "MESSAGE_SENT") {
         appendMessageCard(data);
-        updateTelemetryStats(data);
     } else if (data.type === "PLAYBACK_EVENT") {
         if (data.data && data.data.event === "playback_finished") {
             const banner = document.getElementById("emergencyBanner");

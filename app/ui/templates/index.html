@@ -213,11 +213,11 @@
       <div class="panel-body">
         
         <!-- Bandwidth Reduction Card -->
-        <div class="stat-card">
+        <div class="stat-card" id="telemetryReductionCard">
           <div class="stat-title">DATA PAYLOAD REDUCTION</div>
           <div class="stat-value" id="overallReduction">>99.7%</div>
           <div class="progress-bar-container">
-            <div class="progress-bar"></div>
+            <div class="progress-bar" id="reductionProgressBar" style="width: 99.8%;"></div>
           </div>
           <div class="stat-sub" style="margin-top: 6px;">
             Audio Saved: <span id="savedAudioBytes" style="color: var(--accent-cyan); font-weight: 600;">0 KB</span><br>
@@ -226,15 +226,18 @@
         </div>
 
         <!-- Latency Breakdown Waterfall -->
-        <div class="stat-card">
-          <div class="stat-title">LATENCY WATERFALL (LAST MSG)</div>
+        <div class="stat-card" id="telemetryLatencyCard">
+          <div class="stat-title" style="display: flex; justify-content: space-between;">
+            <span>LATENCY WATERFALL</span>
+            <span id="lastMsgSender" style="color: var(--accent-cyan); font-size: 0.7rem; font-weight: 600;">(LAST MSG)</span>
+          </div>
           <div class="latency-meter" style="margin-top: 8px;">
             <div>
               <div class="latency-row">
                 <span>Local STT (CPU)</span>
                 <span id="lastSttLatency">-- ms</span>
               </div>
-              <div class="latency-bar-bg"><div class="latency-bar-fill" style="width: 70%;"></div></div>
+              <div class="latency-bar-bg"><div class="latency-bar-fill" id="sttLatencyBar" style="width: 0%; transition: width 0.4s ease;"></div></div>
             </div>
 
             <div>
@@ -242,7 +245,7 @@
                 <span>Network Transport</span>
                 <span id="lastNetLatency">-- ms</span>
               </div>
-              <div class="latency-bar-bg"><div class="latency-bar-fill" style="width: 15%; background: var(--accent-emerald);"></div></div>
+              <div class="latency-bar-bg"><div class="latency-bar-fill" id="netLatencyBar" style="width: 0%; background: var(--accent-emerald); transition: width 0.4s ease;"></div></div>
             </div>
 
             <div>
@@ -250,7 +253,7 @@
                 <span>Local Neural TTS</span>
                 <span id="lastTtsLatency">-- ms</span>
               </div>
-              <div class="latency-bar-bg"><div class="latency-bar-fill" style="width: 30%; background: var(--accent-amber);"></div></div>
+              <div class="latency-bar-bg"><div class="latency-bar-fill" id="ttsLatencyBar" style="width: 0%; background: var(--accent-amber); transition: width 0.4s ease;"></div></div>
             </div>
 
             <div style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 6px; margin-top: 4px;">
@@ -280,6 +283,6 @@
 
   </main>
 
-  <script src="/static/js/app.js?v=3.0"></script>
+  <script src="/static/js/app.js?v=3.5"></script>
 </body>
 </html>
